@@ -1,0 +1,341 @@
+:root {
+    --primary-bg: #d5c0b5;
+    --dark-text: #252424;
+    --white: #ffffff;
+    --highlight: #b88b6a;
+    --highlight-light: #f3e7df;
+    --sidebar-width: 280px;
+    --border-color: #e8d8cf;
+    --shadow: 0 4px 15px rgba(0,0,0,0.08);
+}
+
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+body {
+    font-family: 'Siemreap', sans-serif;
+    background: var(--primary-bg);
+    color: var(--dark-text);
+    overflow-x: hidden;
+}
+
+/* =========================
+   Admin Sidebar
+========================= */
+.admin-sidebar {
+    position: fixed;
+    left: 0;
+    top: 0;
+    width: var(--sidebar-width);
+    height: 100vh;
+    background: #252424;
+    color: var(--white);
+    transition: all 0.3s ease;
+    z-index: 1000;
+    overflow-y: auto;
+    box-shadow: 3px 0 15px rgba(0,0,0,0.15);
+}
+
+.sidebar-header {
+    padding: 28px 20px;
+    text-align: center;
+    border-bottom: 1px solid rgba(255,255,255,0.08);
+}
+
+.sidebar-header h3 {
+    color: #d5c0b5;
+    font-size: 1.5rem;
+    margin-bottom: 6px;
+}
+
+.sidebar-header p {
+    font-size: 14px;
+    opacity: 0.75;
+}
+
+.sidebar-menu {
+    padding: 20px 0;
+}
+
+.menu-item {
+    padding: 14px 25px;
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    color: var(--white);
+    text-decoration: none;
+    transition: all 0.3s ease;
+    border-left: 4px solid transparent;
+    font-size: 15px;
+}
+
+.menu-item:hover,
+.menu-item.active {
+    background: rgba(213,192,181,0.12);
+    border-left-color: #d5c0b5;
+    color: #d5c0b5;
+    padding-left: 30px;
+}
+
+.menu-item i {
+    width: 24px;
+    font-size: 1.1rem;
+}
+
+/* =========================
+   Main Content
+========================= */
+.admin-main {
+    margin-left: var(--sidebar-width);
+    padding: 25px;
+    min-height: 100vh;
+}
+
+/* =========================
+   Top Bar
+========================= */
+.top-bar {
+    background: var(--white);
+    border-radius: 18px;
+    padding: 18px 28px;
+    margin-bottom: 25px;
+    box-shadow: var(--shadow);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.page-title {
+    font-size: 1.7rem;
+    font-weight: 700;
+    color: var(--dark-text);
+}
+
+.admin-badge {
+    background: var(--highlight);
+    color: var(--white);
+    padding: 10px 22px;
+    border-radius: 50px;
+    font-weight: 600;
+    letter-spacing: 0.5px;
+    box-shadow: 0 3px 10px rgba(184,139,106,0.3);
+}
+
+/* =========================
+   Stat Cards
+========================= */
+.stat-card {
+    background: var(--white);
+    border-radius: 18px;
+    padding: 24px;
+    margin-bottom: 20px;
+    box-shadow: var(--shadow);
+    transition: all 0.3s ease;
+    border: 1px solid var(--border-color);
+}
+
+.stat-card:hover {
+    transform: translateY(-6px);
+    box-shadow: 0 10px 25px rgba(0,0,0,0.12);
+}
+
+.stat-icon {
+    width: 65px;
+    height: 65px;
+    background: var(--highlight-light);
+    border-radius: 16px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 30px;
+    color: var(--highlight);
+    margin-bottom: 15px;
+}
+
+.stat-number {
+    font-size: 32px;
+    font-weight: bold;
+    color: var(--dark-text);
+}
+
+.stat-label {
+    color: #666;
+    font-size: 14px;
+    margin-top: 5px;
+}
+
+/* =========================
+   Tables
+========================= */
+.data-table {
+    background: var(--white);
+    border-radius: 18px;
+    overflow: hidden;
+    box-shadow: var(--shadow);
+    border: 1px solid var(--border-color);
+}
+
+.data-table table {
+    margin-bottom: 0;
+}
+
+.data-table th {
+    background: #252424;
+    color: var(--white);
+    padding: 16px;
+    font-weight: 600;
+    font-size: 15px;
+}
+
+.data-table td {
+    padding: 14px 16px;
+    vertical-align: middle;
+    color: var(--dark-text);
+    border-bottom: 1px solid #f1e7e2;
+}
+
+.data-table tr:hover {
+    background: #faf7f5;
+}
+
+/* =========================
+   Badges
+========================= */
+.badge-status {
+    padding: 6px 14px;
+    border-radius: 50px;
+    font-size: 12px;
+    font-weight: 600;
+    display: inline-block;
+}
+
+.badge-available {
+    background: #d4edda;
+    color: #155724;
+}
+
+.badge-booked {
+    background: #f8d7da;
+    color: #721c24;
+}
+
+.badge-maintenance {
+    background: #fff3cd;
+    color: #856404;
+}
+
+.badge-pending {
+    background: #ffe8b3;
+    color: #7a5b00;
+}
+
+.badge-confirmed {
+    background: #d4edda;
+    color: #ffffff;
+}
+
+/* =========================
+   Buttons
+========================= */
+.btn-action {
+    padding: 7px 14px;
+    margin: 0 3px;
+    border-radius: 10px;
+    font-size: 12px;
+    border: none;
+    transition: 0.3s ease;
+    font-weight: 600;
+    cursor: pointer;
+}
+
+.btn-edit {
+    background: var(--highlight);
+    color: var(--white);
+}
+
+.btn-edit:hover {
+    background: #9e7355;
+    transform: scale(1.05);
+}
+
+.btn-delete {
+    background: #252424;
+    color: var(--white);
+}
+
+.btn-delete:hover {
+    background: #000;
+    transform: scale(1.05);
+}
+
+/* =========================
+   Form Elements
+========================= */
+label {
+    color: var(--dark-text);
+    font-weight: 600;
+    margin-bottom: 6px;
+}
+
+.form-control,
+.form-select {
+    border-radius: 12px;
+    border: 1px solid #ddd;
+    padding: 12px 15px;
+    transition: 0.3s ease;
+    color: var(--dark-text);
+}
+
+.form-control:focus,
+.form-select:focus {
+    border-color: var(--highlight);
+    box-shadow: 0 0 0 0.2rem rgba(184,139,106,0.2);
+}
+
+/* =========================
+   Modal
+========================= */
+.modal-content {
+    border-radius: 18px;
+    border: none;
+    overflow: hidden;
+}
+
+.modal-header {
+    background: #252424;
+    color: var(--white);
+    padding: 18px 22px;
+}
+
+.modal-title {
+    font-weight: 600;
+}
+
+.modal-body {
+    background: #fff;
+    padding: 25px;
+}
+
+/* =========================
+   Responsive
+========================= */
+@media (max-width: 768px) {
+
+    .admin-sidebar {
+        transform: translateX(-100%);
+    }
+
+    .admin-main {
+        margin-left: 0;
+        padding: 15px;
+    }
+
+    .top-bar {
+        flex-direction: column;
+        gap: 15px;
+        align-items: flex-start;
+    }
+}
