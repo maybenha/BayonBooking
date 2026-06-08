@@ -55,7 +55,7 @@
                     <div class="col-lg-3 col-md-6 mb-4">
                         <div class="footer-widget">
                             <h5 class="footer-title">
-                                <i class="fas fa-hotel"></i> ការកក់សណ្ឋាគារបាយ័ន
+                                <i class="fas fa-hotel"></i> សណ្ឋាគារបុផ្ផាខ្មែរ
                             </h5>
                             <p class="footer-description">
                                 Experience luxury and comfort in the heart of Siem Reap, Cambodia. 

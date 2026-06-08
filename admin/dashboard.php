@@ -1,11 +1,9 @@
 <?php
 // ==========================================
-// ADMIN DASHBOARD MAIN FILE
+// ENHANCED ADMIN DASHBOARD
 // File: admin/dashboard.php
 // ==========================================
-?>
 
-<?php
 session_start();
 require_once '../config/database.php';
 require_once '../classes/RoomManager.php';
@@ -17,86 +15,138 @@ if (!isset($_SESSION['user_id']) || $_SESSION['role'] !== 'admin') {
     exit();
 }
 
+// Auto-complete expired bookings
 $database = new Database();
 $db = $database->getConnection();
+$bookingManager = new BookingManager($db);
+$bookingManager->autoCompleteExpiredBookings();
 
 $roomManager = new RoomManager($db);
-$bookingManager = new BookingManager($db);
 
 // Handle room deletion
 if (isset($_GET['delete_room'])) {
-    $roomManager->deleteRoom($_GET['delete_room']);
-    header("Location: dashboard.php?tab=rooms");
-    exit();
-}
-
-// Handle room status update
-if (isset($_POST['update_status'])) {
-    $roomManager->updateRoomStatus($_POST['room_id'], $_POST['room_status']);
+    $result = $roomManager->deleteRoom($_GET['delete_room']);
+    $_SESSION['message'] = $result['message'];
+    $_SESSION['message_type'] = $result['success'] ? 'success' : 'error';
     header("Location: dashboard.php?tab=rooms");
     exit();
 }
 
 // Handle booking confirmation
 if (isset($_POST['confirm_booking'])) {
-    $bookingManager->updateBookingStatus($_POST['booking_id'], 'confirmed');
+    $result = $bookingManager->updateBookingStatus($_POST['booking_id'], 'confirmed');
+    if ($result) {
+        // Update room status to booked
+        $booking = $bookingManager->getBookingById($_POST['booking_id']);
+        if ($booking) {
+            $roomManager->updateRoomStatus($booking['room_id'], 'booked');
+        }
+        $_SESSION['message'] = 'បានបញ្ជាក់ការកក់ដោយជោគជ័យ';
+        $_SESSION['message_type'] = 'success';
+    } else {
+        $_SESSION['message'] = 'មិនអាចបញ្ជាក់ការកក់បានទេ';
+        $_SESSION['message_type'] = 'error';
+    }
     header("Location: dashboard.php?tab=bookings");
     exit();
 }
 
 // Handle booking cancellation
 if (isset($_POST['cancel_booking'])) {
-    $bookingManager->updateBookingStatus($_POST['booking_id'], 'cancelled');
+    $result = $bookingManager->updateBookingStatus($_POST['booking_id'], 'cancelled');
+    if ($result) {
+        // Update room status back to available
+        $booking = $bookingManager->getBookingById($_POST['booking_id']);
+        if ($booking && $booking['booking_status'] === 'confirmed') {
+            $roomManager->updateRoomStatus($booking['room_id'], 'available');
+        }
+        $_SESSION['message'] = 'បានបោះបង់ការកក់ដោយជោគជ័យ';
+        $_SESSION['message_type'] = 'success';
+    } else {
+        $_SESSION['message'] = 'មិនអាចបោះបង់ការកក់បានទេ';
+        $_SESSION['message_type'] = 'error';
+    }
+    header("Location: dashboard.php?tab=bookings");
+    exit();
+}
+
+// Handle payment verification
+if (isset($_POST['verify_payment'])) {
+    $result = $bookingManager->updatePaymentStatus($_POST['booking_id'], 'paid');
+    if ($result) {
+        $_SESSION['message'] = 'បានបញ្ជាក់ការបង់ប្រាក់ដោយជោគជ័យ';
+        $_SESSION['message_type'] = 'success';
+    } else {
+        $_SESSION['message'] = 'មិនអាចបញ្ជាក់ការបង់ប្រាក់បានទេ';
+        $_SESSION['message_type'] = 'error';
+    }
     header("Location: dashboard.php?tab=bookings");
     exit();
 }
 
 // Get current tab
 $active_tab = isset($_GET['tab']) ? $_GET['tab'] : 'dashboard';
-$rooms = $roomManager->getAllRooms();
+
+// Pagination for rooms
+$page = isset($_GET['page']) ? (int)$_GET['page'] : 1;
+$limit = 10;
+$offset = ($page - 1) * $limit;
+$rooms = $roomManager->getAllRoomsPaginated($limit, $offset);
+$totalRooms = $roomManager->getTotalRoomsCount();
+$totalPages = ceil($totalRooms / $limit);
+
 $roomTypes = $roomManager->getRoomTypes();
 $bookings = $bookingManager->getAllBookings();
-$pendingBookings = $bookingManager->getBookingsByStatus('pending');
-$confirmedBookings = $bookingManager->getBookingsByStatus('confirmed');
 $stats = $bookingManager->getBookingStats();
 
 // Calculate available rooms
 $availableRooms = 0;
-foreach ($rooms as $room) {
-    if ($room['room_status'] == 'available') {
-        $availableRooms++;
-    }
+$bookedRooms = 0;
+$maintenanceRooms = 0;
+foreach ($roomManager->getAllRooms() as $room) {
+    if ($room['room_status'] == 'available') $availableRooms++;
+    elseif ($room['room_status'] == 'booked') $bookedRooms++;
+    elseif ($room['room_status'] == 'maintenance') $maintenanceRooms++;
 }
+$is_admin_page = true;
 ?>
 
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Admin Dashboard - BayonBooking</title>
-    
+
     <!-- Bootstrap -->
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
-    
+
     <!-- Font Awesome -->
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
-    
+
     <!-- Google Fonts -->
-    <link href="https://fonts.googleapis.com/css2?family=Kdam+Thmor+Pro&display=swap" rel="stylesheet">
-    <link href="https://fonts.googleapis.com/css2?family=Hanuman:wght@100;300;400;700;900&display=swap" rel="stylesheet">
     <link href="https://fonts.googleapis.com/css2?family=Siemreap&display=swap" rel="stylesheet">
-    
+
     <!-- SweetAlert2 -->
     <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
-    
+
+    <!-- DataTables -->
+    <link href="https://cdn.datatables.net/1.13.4/css/dataTables.bootstrap5.min.css" rel="stylesheet">
+    <script src="https://cdn.datatables.net/1.13.4/js/jquery.dataTables.min.js"></script>
+    <script src="https://cdn.datatables.net/1.13.4/js/dataTables.bootstrap5.min.js"></script>
+
     <style>
         :root {
             --primary-dark: #543414;
-            --secondary-light: #d5c0b5;
-            --bg-light: #ffffff;
-            --text-dark: #252424;
-            --shadow: 0 10px 30px rgba(0,0,0,0.1);
+            --bg-light: #F1F0E7;
+            --text-dark: #1a1a1a;
+            --border-light: #e0e0e0;
+            --success: #28a745;
+            --warning: #ffc107;
+            --danger: #dc3545;
+            --info: #17a2b8;
+            --secondary: #6c757d;
         }
 
         * {
@@ -107,39 +157,32 @@ foreach ($rooms as $room) {
 
         body {
             font-family: 'Siemreap', sans-serif;
-            background-color: #f5f5f5;
+            background-color: var(--bg-light);
             color: var(--text-dark);
         }
 
         /* Navbar Styles */
-        .glass-navbar {
-            background: rgba(255, 255, 255, 0.97);
-            backdrop-filter: blur(10px);
-            box-shadow: var(--shadow);
-            padding: 1rem 0;
-            transition: 0.3s ease;
+        .navbar {
+            background: white !important;
+            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+            padding: 0.75rem 0;
         }
 
         .navbar-brand {
-            font-size: 1.8rem;
-            font-weight: bold;
+            font-size: 1.5rem;
+            font-weight: 600;
             color: var(--primary-dark) !important;
-        }
-
-        .navbar-brand i {
-            color: var(--primary-dark);
         }
 
         .nav-link {
             color: var(--text-dark) !important;
             margin: 0 0.5rem;
             font-weight: 500;
-            transition: 0.3s ease;
+            transition: 0.2s ease;
         }
 
         .nav-link:hover {
             color: var(--primary-dark) !important;
-            transform: translateY(-2px);
         }
 
         .nav-link.active {
@@ -149,104 +192,106 @@ foreach ($rooms as $room) {
 
         .btn-logout {
             background: transparent;
-            color: var(--text-dark) !important;
-            border: 2px solid var(--text-dark);
-            padding: 0.5rem 1.2rem !important;
-            border-radius: 8px;
-            font-weight: 600;
-            transition: 0.3s ease;
+            color: var(--text-dark);
+            border: 1px solid var(--border-light);
+            padding: 0.4rem 1rem !important;
+            border-radius: 6px;
+            transition: 0.2s ease;
         }
 
         .btn-logout:hover {
-            background: var(--text-dark);
-            color: white !important;
-            transform: translateY(-2px);
-        }
-
-        .btn-gold {
             background: var(--primary-dark);
-            color: white !important;
-            border: none;
-            padding: 10px 25px;
-            font-weight: 600;
-            transition: 0.3s ease;
-            border-radius: 8px;
-        }
-
-        .btn-gold:hover {
-            background: #3a2610;
-            transform: translateY(-2px);
+            color: white;
+            border-color: var(--primary-dark);
         }
 
         /* Admin Wrapper */
         .admin-wrapper {
-            padding-top: 90px;
+            padding-top: 80px;
             min-height: 100vh;
         }
 
-        /* Stat Cards */
+        /* Stat Cards - Clean Design */
         .stat-card {
             background: white;
-            border-radius: 15px;
-            padding: 25px;
-            box-shadow: var(--shadow);
+            border-radius: 12px;
+            padding: 20px;
             margin-bottom: 20px;
-            transition: transform 0.3s ease;
-            border-left: 5px solid var(--primary-dark);
+            border: 1px solid var(--border-light);
+            transition: 0.2s ease;
         }
 
         .stat-card:hover {
-            transform: translateY(-5px);
-            box-shadow: 0 15px 35px rgba(0,0,0,0.15);
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
         }
 
         .stat-number {
-            font-size: 2.5rem;
-            font-weight: bold;
+            font-size: 2rem;
+            font-weight: 600;
             color: var(--primary-dark);
         }
 
         .stat-label {
             color: #666;
-            font-size: 0.9rem;
+            font-size: 0.85rem;
             margin-top: 5px;
         }
 
         .stat-icon {
-            font-size: 3rem;
-            color: var(--secondary-light);
+            font-size: 2rem;
+            color: #ccc;
         }
 
         /* Data Table */
-        .data-table {
+        .data-card {
             background: white;
-            border-radius: 15px;
-            box-shadow: var(--shadow);
+            border-radius: 2px;
+            border: 1px solid var(--border-light);
             overflow: hidden;
             margin-bottom: 30px;
         }
 
-        .data-table .table {
-            margin-bottom: 0;
+        .data-card-header {
+            padding: 15px 20px;
+            border-bottom: 1px solid var(--border-light);
+            background: white;
         }
 
-        .data-table thead th {
-            background: var(--secondary-light);
-            color: var(--primary-dark);
-            border-bottom: none;
-            padding: 15px;
+        .data-card-header h5 {
+            margin: 0;
             font-weight: 600;
         }
 
+        .data-table {
+            width: 100%;
+        }
+
+        .data-table thead th {
+            background: #f8f9fa;
+            border-bottom: 1px solid var(--border-light);
+            padding: 12px 15px;
+            font-weight: 600;
+            font-size: 0.85rem;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .data-table tbody td {
+            padding: 12px 15px;
+            vertical-align: middle;
+            border-bottom: 1px solid #f0f0f0;
+        }
+
         .data-table tbody tr:hover {
-            background: #f9f9f9;
+            background: #fafafa;
         }
 
         /* Badges */
         .badge-status {
-            padding: 5px 12px;
-            border-radius: 20px;
-            font-size: 0.85rem;
+            padding: 4px 10px;
+            border-radius: 5px;
+            font-size: 0.75rem;
             font-weight: 500;
             display: inline-block;
         }
@@ -266,6 +311,11 @@ foreach ($rooms as $room) {
             color: #721c24;
         }
 
+        .badge-completed {
+            background: #d1ecf1;
+            color: #0c5460;
+        }
+
         .badge-available {
             background: #d4edda;
             color: #155724;
@@ -281,67 +331,160 @@ foreach ($rooms as $room) {
             color: #856404;
         }
 
-        /* Buttons */
+        /* Buttons - Clean */
         .btn-action {
-            margin: 0 3px;
-            padding: 5px 12px;
-            border-radius: 6px;
+            padding: 5px 10px;
+            border-radius: 2px;
+            font-size: 0.8rem;
+            margin: 0 2px;
+            border: 1px solid var(--border-light);
+            background: white;
+            transition: 0.2s ease;
+        }
+
+        .btn-action:hover {
+            background: var(--primary-dark);
+            color: white;
+            border-color: var(--primary-dark);
+        }
+
+        .btn-primary-custom {
+            background: var(--primary-dark);
+            color: white;
+            border: none;
+            padding: 8px 20px;
+            border-radius: 2px;
+            font-weight: 500;
+            transition: 0.2s ease;
+        }
+
+        .btn-primary-custom:hover {
+            background: #3a2610;
+            transform: translateY(-1px);
+        }
+
+        .btn-outline-custom {
+            background: transparent;
+            color: var(--text-dark);
+            border: 1px solid var(--border-light);
+            padding: 8px 20px;
+            border-radius: 2px;
+            transition: 0.2s ease;
+        }
+
+        .btn-outline-custom:hover {
+            background: var(--primary-dark);
+            color: white;
+            border-color: var(--primary-dark);
         }
 
         /* Welcome Banner */
         .welcome-banner {
-            background: linear-gradient(135deg, var(--secondary-light) 0%, #f0e6e0 100%);
+            background: white;
+            border: 1px solid var(--border-light);
             padding: 20px 25px;
-            border-radius: 15px;
-            margin-top: 90px;
+            border-radius: 2px;
+            margin-top: 60px;
             margin-bottom: 30px;
         }
 
-        /* Responsive */
-        @media (max-width: 768px) {
-            .navbar-brand {
-                font-size: 1.2rem;
-            }
-            
-            .nav-link {
-                margin: 0 0.2rem;
-                font-size: 0.9rem;
-            }
-            
-            .stat-number {
-                font-size: 1.8rem;
-            }
-            
-            .stat-icon {
-                font-size: 2rem;
-            }
-        }
-        
         /* Modal Styles */
+        .modal-content {
+            border-radius: 2px;
+            border: none;
+        }
+
+        .modal-header {
+            border-bottom: 1px solid var(--border-light);
+            background: white;
+            padding: 15px 20px;
+        }
+
+        .modal-footer {
+            border-top: 1px solid var(--border-light);
+            padding: 15px 20px;
+        }
+
+        .form-control,
+        .form-select {
+            border-radius: 2px;
+            border: 1px solid var(--border-light);
+            padding: 8px 12px;
+        }
+
+        .form-control:focus,
+        .form-select:focus {
+            border-color: var(--primary-dark);
+            box-shadow: none;
+        }
+
         .room-image-preview {
             max-width: 100%;
             height: auto;
-            border-radius: 10px;
+            border-radius: 8px;
             margin-top: 10px;
         }
-        
+
         .current-image {
             max-width: 150px;
             border-radius: 8px;
             margin: 10px 0;
+            border: 1px solid var(--border-light);
+        }
+
+        /* Pagination */
+        .pagination {
+            margin: 20px 0 0;
+        }
+
+        .page-link {
+            color: var(--text-dark);
+            border: 1px solid var(--border-light);
+            margin: 0 2px;
+            border-radius: 6px;
+        }
+
+        .page-link:hover {
+            background: var(--primary-dark);
+            color: white;
+            border-color: var(--primary-dark);
+        }
+
+        .page-item.active .page-link {
+            background: var(--primary-dark);
+            border-color: var(--primary-dark);
+        }
+
+        /* Responsive */
+        @media (max-width: 768px) {
+            .admin-wrapper {
+                padding-top: 70px;
+            }
+
+            .stat-number {
+                font-size: 1.5rem;
+            }
+
+            .data-table thead th {
+                font-size: 0.7rem;
+            }
+
+            .data-table tbody td {
+                font-size: 0.8rem;
+            }
         }
     </style>
 </head>
+
 <body>
     <!-- Navbar -->
-    <nav class="navbar navbar-expand-lg glass-navbar fixed-top">
+    <nav class="navbar navbar-expand-lg fixed-top">
         <div class="container">
-        <a class="navbar-brand d-flex align-items-center" 
-            href="dashboard.php?tab=dashboard"
-            style="font-family: 'Siemreap', sans-serif;">
+            <img class="navbar-brand" style="width: 100px;" src="/assets/images/Bopha1.png" alt="">
 
-               
-                <span>សណ្ឋាគារបាយ័ន</span>
+            <!-- Brand -->
+            <a class="navbar-brand" href="<?php echo $is_admin_page ? '../index.php' : 'index.php'; ?>">
+                <span style="color: #02850D; font-family: khmer os moul , sans-serif;" class="brand-text">សណ្ឋាគារបុប្ផាខ្មែរ</span>
             </a>
             <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav">
                 <span class="navbar-toggler-icon"></span>
@@ -349,28 +492,57 @@ foreach ($rooms as $room) {
             <div class="collapse navbar-collapse" id="navbarNav">
                 <ul class="navbar-nav ms-auto align-items-center">
                     <li class="nav-item">
-                        <a class="nav-link <?php echo $active_tab == 'dashboard' ? 'active' : ''; ?>" href="dashboard.php?tab=dashboard">
-                            <i class="fas fa-tachometer-alt"></i> ផ្ទាំងគ្រប់គ្រង
+                        <a class="nav-link <?php echo $active_tab == 'dashboard' ? 'active' : ''; ?>"
+                            href="dashboard.php?tab=dashboard"
+                            style="display:flex; align-items:center; gap:8px;">
+                            <img src="/assets/images/5432747.png"
+                                alt="Dashboard"
+                                style="width:40px; height:40px; object-fit:contain;">
+                            Dashboard
                         </a>
                     </li>
+
                     <li class="nav-item">
-                        <a class="nav-link <?php echo $active_tab == 'rooms' ? 'active' : ''; ?>" href="dashboard.php?tab=rooms">
-                            <i class="fas fa-bed"></i> គ្រប់គ្រង់បន្ទប់
+                        <a class="nav-link <?php echo $active_tab == 'rooms' ? 'active' : ''; ?>"
+                            href="dashboard.php?tab=rooms"
+                            style="display:flex; align-items:center; gap:8px;">
+                            <img src="/assets/images/room.png"
+                                alt="Rooms"
+                                style="width:40px; height:40px; object-fit:contain;">
+                            Rooms
                         </a>
                     </li>
+
                     <li class="nav-item">
-                        <a class="nav-link <?php echo $active_tab == 'bookings' ? 'active' : ''; ?>" href="dashboard.php?tab=bookings">
-                            <i class="fas fa-calendar-check"></i> គ្រប់គ្រងការកក់
+                        <a class="nav-link <?php echo $active_tab == 'bookings' ? 'active' : ''; ?>"
+                            href="dashboard.php?tab=bookings"
+                            style="display:flex; align-items:center; gap:8px;">
+                            <img src="/assets/images/book.png"
+                                alt="Bookings"
+                                style="width:40px; height:40px; object-fit:contain;">
+                            Bookings
                         </a>
                     </li>
+
                     <li class="nav-item">
-                        <a class="nav-link" href="../index.php">
-                            <i class="fas fa-home"></i> មើលទំព័រដើម
+                        <a class="nav-link"
+                            href="../index.php"
+                            style="display:flex; align-items:center; gap:8px;">
+                            <img src="/assets/images/home.png"
+                                alt="View Site"
+                                style="width:40px; height:40px; object-fit:contain;">
+                            View Site
                         </a>
                     </li>
+
                     <li class="nav-item ms-2">
-                        <a class="btn btn-logout" href="../logout.php">
-                            <i class="fas fa-sign-out-alt"></i> ចាកចេញ
+                        <a class="btn btn-logout"
+                            href="../logout.php"
+                            style="display:flex; align-items:center; gap:8px;">
+                            <img src="/assets/images/logout.png"
+                                alt="Logout"
+                                style="width:40px; height:40px; object-fit:contain;">
+                            Logout
                         </a>
                     </li>
                 </ul>
@@ -381,1030 +553,1309 @@ foreach ($rooms as $room) {
     <!-- Main Content -->
     <div class="admin-wrapper">
         <div class="container">
+            <!-- Messages -->
+            <?php if (isset($_SESSION['message'])): ?>
+                <div class="alert alert-<?php echo $_SESSION['message_type'] == 'success' ? 'success' : 'danger'; ?> alert-dismissible fade show" role="alert">
+                    <?php
+                    echo $_SESSION['message'];
+                    unset($_SESSION['message']);
+                    unset($_SESSION['message_type']);
+                    ?>
+                    <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+                </div>
+            <?php endif; ?>
+
             <!-- Welcome Banner -->
             <div class="welcome-banner">
                 <div class="d-flex justify-content-between align-items-center flex-wrap">
                     <div>
-                        <h4><i class="fas fa-user-shield"></i> សូមស្វាគមន៍, <?php echo htmlspecialchars($_SESSION['username']); ?>!</h4>
-                        <p class="mb-0">គ្រប់គ្រងបន្ទប់សណ្ឋាគាររបស់អ្នក ការកក់ និងតាមដានសកម្មភាពទាំងអស់ពីទីនេះ។</p>
+                        <h5><i class="fas fa-user-shield"></i> Welcome, <?php echo htmlspecialchars($_SESSION['username']); ?></h5>
+                        <p class="mb-0 text-muted">Manage your hotel rooms, bookings, and monitor all activities from here.</p>
                     </div>
                     <div class="mt-2 mt-sm-0">
-                        <span class="badge bg-dark p-2">
-                            <i class="fas fa-calendar"></i> <?php echo date('F j, Y'); ?>
+                        <span class="text-muted">
+                            <i class="far fa-calendar-alt"></i> <?php echo date('F j, Y'); ?>
                         </span>
                     </div>
                 </div>
             </div>
 
-            <?php if($active_tab == 'dashboard'): ?>
-            <!-- Dashboard Tab -->
-            <div class="row">
-                <div class="col-md-3 col-sm-6">
-                    <div class="stat-card">
-                        <div class="d-flex justify-content-between align-items-center">
-                            <div>
-                                <div class="stat-number"><?php echo count($rooms); ?></div>
-                                <div class="stat-label">សរុបបន្ទប់</div>
+            <?php if ($active_tab == 'dashboard'): ?>
+                <!-- Dashboard Tab -->
+                <div class="row">
+                    <div class="col-md-3 col-sm-6">
+                        <div class="stat-card">
+                            <div class="d-flex justify-content-between align-items-center">
+                                <div>
+                                    <div class="stat-number"><?php echo $totalRooms; ?></div>
+                                    <div class="stat-label">Total Rooms</div>
+                                </div>
+                                <div class="stat-icon"><i class="fas fa-bed"></i></div>
                             </div>
-                            <div class="stat-icon"><i class="fas fa-bed"></i></div>
+                        </div>
+                    </div>
+                    <div class="col-md-3 col-sm-6">
+                        <div class="stat-card">
+                            <div class="d-flex justify-content-between align-items-center">
+                                <div>
+                                    <div class="stat-number"><?php echo $availableRooms; ?></div>
+                                    <div class="stat-label">Available Rooms</div>
+                                </div>
+                                <div class="stat-icon"><i class="fas fa-check-circle"></i></div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-md-3 col-sm-6">
+                        <div class="stat-card">
+                            <div class="d-flex justify-content-between align-items-center">
+                                <div>
+                                    <div class="stat-number"><?php echo isset($stats['total']) ? $stats['total'] : 0; ?></div>
+                                    <div class="stat-label">Total Bookings</div>
+                                </div>
+                                <div class="stat-icon"><i class="fas fa-calendar-check"></i></div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-md-3 col-sm-6">
+                        <div class="stat-card">
+                            <div class="d-flex justify-content-between align-items-center">
+                                <div>
+                                    <div class="stat-number"><?php echo isset($stats['pending']) ? $stats['pending'] : 0; ?></div>
+                                    <div class="stat-label">Pending Bookings</div>
+                                </div>
+                                <div class="stat-icon"><i class="fas fa-clock"></i></div>
+                            </div>
                         </div>
                     </div>
                 </div>
-                <div class="col-md-3 col-sm-6">
-                    <div class="stat-card">
-                        <div class="d-flex justify-content-between align-items-center">
-                            <div>
-                                <div class="stat-number"><?php echo $availableRooms; ?></div>
-                                <div class="stat-label">បន្ទប់ទំនេរ</div>
-                            </div>
-                            <div class="stat-icon"><i class="fas fa-check-circle"></i></div>
-                        </div>
-                    </div>
-                </div>
-                <div class="col-md-3 col-sm-6">
-                    <div class="stat-card">
-                        <div class="d-flex justify-content-between align-items-center">
-                            <div>
-                                <div class="stat-number"><?php echo $stats['total']; ?></div>
-                                <div class="stat-label">សរុបការកក់</div>
-                            </div>
-                            <div class="stat-icon"><i class="fas fa-calendar-check"></i></div>
-                        </div>
-                    </div>
-                </div>
-                <div class="col-md-3 col-sm-6">
-                    <div class="stat-card">
-                        <div class="d-flex justify-content-between align-items-center">
-                            <div>
-                                <div class="stat-number"><?php echo $stats['pending']; ?></div>
-                                <div class="stat-label">កំពុងរង់ចាំ</div>
-                            </div>
-                            <div class="stat-icon"><i class="fas fa-clock"></i></div>
-                        </div>
-                    </div>
-                </div>
-            </div>
 
-            <!-- Recent Bookings -->
-            <div class="data-table">
-                <div class="p-3 bg-white border-bottom">
-                    <h5 class="mb-0"><i class="fas fa-receipt"></i> បញ្ជីការកក់ថ្មីៗ</h5>
-                </div>
-                <div class="table-responsive">
-                    <table class="table">
-                        <thead>
-                            <tr>
-                                <th>លេខសម្គាល់</th>
-                                <th>ភ្ញៀវ</th>
-                                <th>បន្ទប់</th>
-                                <th>ថ្ងៃចូល</th>
-                                <th>ថ្ងៃចេញ</th>
-                                <th>តម្លៃសរុប</th>
-                                <th>ស្ថានភាព</th>
-                            
-                            </tr>
-                        </thead>
-                        <tbody>
-                            <?php 
-                            $recentBookings = array_slice($bookings, 0, 10);
-                            if(empty($recentBookings)): 
-                            ?>
-                            <tr>
-                                <td colspan="8" class="text-center">មិនមានការកក់</td>
-                            </tr>
-                            <?php else: ?>
-                                <?php foreach($recentBookings as $booking): ?>
+                <!-- Recent Bookings -->
+                <div class="data-card">
+                    <div class="data-card-header">
+                        <h5><i class="fas fa-receipt"></i> Recent Bookings</h5>
+                    </div>
+                    <div class="table-responsive">
+                        <table class="table data-table">
+                            <thead>
                                 <tr>
-                                    <td>#<?php echo $booking['booking_id']; ?></td>
-                                    <td><?php echo htmlspecialchars($booking['user_name']); ?></td>
-                                    <td><?php echo htmlspecialchars($booking['room_number']); ?></td>
-                                    <td><?php echo date('d/m/Y', strtotime($booking['checkin_date'])); ?></td>
-                                    <td><?php echo date('d/m/Y', strtotime($booking['checkout_date'])); ?></td>
-                                    <td>$<?php echo number_format($booking['total_payment'], 2); ?></td>
-                                    <td>
-                                        <span class="badge-status <?php echo $booking['booking_status'] == 'pending' ? 'badge-pending' : ($booking['booking_status'] == 'confirmed' ? 'badge-confirmed' : 'badge-cancelled'); ?>">
-                                            <?php echo $booking['booking_status'] == 'pending' ? 'កំពុងរង់ចាំ' : ($booking['booking_status'] == 'confirmed' ? 'បានបញ្ជាក់' : 'បានបោះបង់'); ?>
-                                        </span>
-                                    </td>
-                                    <td>
-                                        
-                                     </div>
-                                    </td>
+                                    <th>ID</th>
+                                    <th>Guest</th>
+                                    <th>Room</th>
+                                    <th>Check-in</th>
+                                    <th>Check-out</th>
+                                    <th>Total</th>
+                                    <th>Status</th>
                                 </tr>
-                                <?php endforeach; ?>
-                            <?php endif; ?>
-                        </tbody>
-                    </table>
-                </div>
-            </div>
+                            </thead>
+                            <tbody>
+                                <?php
+                                $recentBookings = array_slice($bookings, 0, 10);
+                                if (empty($recentBookings)):
+                                ?>
+                                    <tr>
+                                        <td colspan="8" class="text-center">No bookings found</td>
+                                    </tr>
+                                <?php else: ?>
+                                    <?php foreach ($recentBookings as $booking): ?>
+                                        <tr>
+                                            <td>#<?php echo $booking['booking_id']; ?></td>
+                                            <td><?php echo htmlspecialchars($booking['user_name']); ?></td>
+                                            <td><?php echo htmlspecialchars($booking['room_number']); ?></td>
+                                            <td><?php echo date('d/m/Y', strtotime($booking['checkin_date'])); ?></td>
+                                            <td><?php echo date('d/m/Y', strtotime($booking['checkout_date'])); ?></td>
+                                            <td>$<?php echo number_format($booking['total_payment'], 2); ?></td>
+                                            <td>
+                                                <span class="badge-status <?php
+                                                                            echo $booking['booking_status'] == 'pending' ? 'badge-pending' : ($booking['booking_status'] == 'confirmed' ? 'badge-confirmed' : ($booking['booking_status'] == 'cancelled' ? 'badge-cancelled' : 'badge-completed'));
+                                                                            ?>">
+                                                    <?php
+                                                    echo $booking['booking_status'] == 'pending' ? 'Pending' : ($booking['booking_status'] == 'confirmed' ? 'Confirmed' : ($booking['booking_status'] == 'cancelled' ? 'Cancelled' : 'Completed'));
+                                                    ?>
+                                                </span>
+                    </div>
+                    </tr>
+                <?php endforeach; ?>
             <?php endif; ?>
+            </tbody>
+            </table>
+                </div>
+        </div>
+    <?php endif; ?>
 
-            <?php if($active_tab == 'rooms'): ?>
-            <!-- Manage Rooms Tab -->
-            <div class="mb-3">
-                <button class="btn btn-gold" data-bs-toggle="modal" data-bs-target="#addRoomModal">
-                    <i class="fas fa-plus"></i> បន្ថែមបន្ទប់ថ្មី
-                </button>
+    <?php if ($active_tab == 'rooms'): ?>
+        <!-- Manage Rooms Tab -->
+        <div class="mb-3">
+            <button class="btn btn-primary-custom" data-bs-toggle="modal" data-bs-target="#addRoomModal">
+                <i class="fas fa-plus"></i> Add New Room
+            </button>
+        </div>
+
+        <div class="data-card">
+            <div class="data-card-header">
+                <h5><i class="fas fa-door-open"></i> Room Management</h5>
             </div>
-
-            <div class="data-table">
-                <div class="table-responsive">
-                    <table class="table">
-                        <thead>
-                            <tr>
-                                <th>លេខសម្គាល់</th>
-                                <th>លេខបន្ទប់</th>
-                                <th>ប្រភេទ</th>
-                                <th>តម្លៃ/យប់</th>
-                                <th>សមត្ថភាព</th>
-                                <th>ស្ថានភាព</th>
-                                <th>សកម្មភាព</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            <?php foreach($rooms as $room): ?>
+            <div class="table-responsive">
+                <table class="table data-table" id="roomsTable">
+                    <thead>
+                        <tr>
+                            <th>ID</th>
+                            <th>Room No.</th>
+                            <th>Floor</th>
+                            <th>Type</th>
+                            <th>Price/Night</th>
+                            <th>Capacity</th>
+                            <th>Status</th>
+                            <th>Image</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <?php foreach ($rooms as $room): ?>
                             <tr id="room-row-<?php echo $room['room_id']; ?>">
                                 <td><?php echo $room['room_id']; ?></td>
                                 <td><strong><?php echo htmlspecialchars($room['room_number']); ?></strong></td>
-                                <td><?php echo htmlspecialchars($room['type_name']); ?></div>
-                                <td>$<?php echo number_format($room['price_per_night'], 2); ?></div>
-                                <td><i class="fas fa-user"></i> <?php echo $room['capacity']; ?> នាក់</div>
+                                <td>Floor <?php echo $room['floor']; ?></td>
+                                <td><?php echo htmlspecialchars($room['type_name']); ?></td>
+                                <td>$<?php echo number_format($room['price_per_night'], 2); ?></td>
+                                <td><i class="fas fa-user"></i> <?php echo $room['capacity']; ?></td>
                                 <td>
-                                    <select name="room_status" class="form-select form-select-sm status-select" data-id="<?php echo $room['room_id']; ?>" style="width: auto; display: inline-block;">
-                                        <option value="available" <?php echo $room['room_status'] == 'available' ? 'selected' : ''; ?>>ទំនេរ</option>
-                                        <option value="booked" <?php echo $room['room_status'] == 'booked' ? 'selected' : ''; ?>>បានកក់</option>
-                                        <option value="maintenance" <?php echo $room['room_status'] == 'maintenance' ? 'selected' : ''; ?>>ថែទាំ</option>
+                                    <select class="form-select form-select-sm status-select" data-id="<?php echo $room['room_id']; ?>" style="width: 120px;">
+                                        <option value="available" <?php echo $room['room_status'] == 'available' ? 'selected' : ''; ?>>Available</option>
+                                        <option value="booked" <?php echo $room['room_status'] == 'booked' ? 'selected' : ''; ?>>Booked</option>
+                                        <option value="maintenance" <?php echo $room['room_status'] == 'maintenance' ? 'selected' : ''; ?>>Maintenance</option>
                                     </select>
-                                 </div>
-                                <td>
-                                    <button class="btn btn-sm btn-info btn-action view-room" data-id="<?php echo $room['room_id']; ?>">
-                                        <i class="fas fa-eye"></i>
-                                    </button>
-                                    <button class="btn btn-sm btn-warning btn-action edit-room" data-id="<?php echo $room['room_id']; ?>">
-                                        <i class="fas fa-edit"></i>
-                                    </button>
-                                    <button class="btn btn-sm btn-danger btn-action delete-room" data-id="<?php echo $room['room_id']; ?>">
-                                        <i class="fas fa-trash"></i>
-                                    </button>
-                                 </div>
-                            </tr>
-                            <?php endforeach; ?>
-                        </tbody>
-                    </table>
-                </div>
             </div>
+            <td>
+                <?php if ($room['room_image']): ?>
+                    <img src="../<?php echo $room['room_image']; ?>" style="width: 40px; height: 40px; object-fit: cover; border-radius: 6px;">
+                <?php else: ?>
+                    <span class="text-muted">No image</span>
+                <?php endif; ?>
+        </div>
+        <td>
+            <button class="btn-action view-room" data-id="<?php echo $room['room_id']; ?>" title="View">
+                <i class="fas fa-eye"></i>
+            </button>
+            <button class="btn-action edit-room" data-id="<?php echo $room['room_id']; ?>" title="Edit">
+                <i class="fas fa-edit"></i>
+            </button>
+            <button class="btn-action delete-room" data-id="<?php echo $room['room_id']; ?>" title="Delete">
+                <i class="fas fa-trash"></i>
+            </button>
+    </div>
+    </tr>
+<?php endforeach; ?>
+</tbody>
+</table>
+</div>
 
-            <!-- Add Room Modal -->
-            <div class="modal fade" id="addRoomModal" tabindex="-1">
-                <div class="modal-dialog modal-lg">
-                    <div class="modal-content">
-                        <div class="modal-header">
-                            <h5 class="modal-title"><i class="fas fa-plus-circle"></i> បន្ថែមបន្ទប់ថ្មី</h5>
-                            <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
-                        </div>
-                        <form id="addRoomForm" enctype="multipart/form-data">
-                            <div class="modal-body">
-                                <div class="row">
-                                    <div class="col-md-6 mb-3">
-                                        <label class="form-label">លេខបន្ទប់ *</label>
-                                        <input type="text" name="room_number" class="form-control" required>
-                                    </div>
-                                    <div class="col-md-6 mb-3">
-                                        <label class="form-label">ប្រភេទបន្ទប់ *</label>
-                                        <select name="room_type_id" class="form-select" required>
-                                            <option value="">ជ្រើសរើសប្រភេទ</option>
-                                            <?php foreach($roomTypes as $type): ?>
-                                                <option value="<?php echo $type['room_types_id']; ?>"><?php echo htmlspecialchars($type['type_name']); ?></option>
-                                            <?php endforeach; ?>
-                                        </select>
-                                    </div>
-                                    <div class="col-md-6 mb-3">
-                                        <label class="form-label">តម្លៃក្នុងមួយយប់ ($) *</label>
-                                        <input type="number" step="0.01" name="price_per_night" class="form-control" required>
-                                    </div>
-                                    <div class="col-md-6 mb-3">
-                                        <label class="form-label">សមត្ថភាព (នាក់) *</label>
-                                        <input type="number" name="capacity" class="form-control" required>
-                                    </div>
-                                    <div class="col-12 mb-3">
-                                        <label class="form-label">គ្រឿងបរិក្ខារ</label>
-                                        <textarea name="equipments" class="form-control" rows="2" placeholder="ទូរទស្សន៍, Wifi, ម៉ាស៊ីនត្រជាក់, ទូទឹកកក..."></textarea>
-                                    </div>
-                                    <div class="col-12 mb-3">
-                                        <label class="form-label">ការពិពណ៌នាបន្ទប់</label>
-                                        <textarea name="room_description" class="form-control" rows="3"></textarea>
-                                    </div>
-                                    <div class="col-12 mb-3">
-                                        <label class="form-label">រូបភាពបន្ទប់</label>
-                                        <input type="file" name="room_image" class="form-control" accept="image/*">
-                                        <small class="text-muted">អាចទទួលយកបាន៖ JPG, JPEG, PNG, GIF (អតិបរមា 5MB)</small>
-                                        <div id="imagePreview" class="mt-2"></div>
-                                    </div>
-                                </div>
-                            </div>
-                            <div class="modal-footer">
-                                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">បោះបង់</button>
-                                <button type="submit" class="btn btn-gold">បន្ថែមបន្ទប់</button>
-                            </div>
-                        </form>
-                    </div>
-                </div>
+<!-- Pagination -->
+<?php if ($totalPages > 1): ?>
+    <div class="data-card-header">
+        <nav>
+            <ul class="pagination justify-content-end mb-0">
+                <li class="page-item <?php echo $page <= 1 ? 'disabled' : ''; ?>">
+                    <a class="page-link" href="?tab=rooms&page=<?php echo $page - 1; ?>">Previous</a>
+                </li>
+                <?php for ($i = 1; $i <= $totalPages; $i++): ?>
+                    <li class="page-item <?php echo $i == $page ? 'active' : ''; ?>">
+                        <a class="page-link" href="?tab=rooms&page=<?php echo $i; ?>"><?php echo $i; ?></a>
+                    </li>
+                <?php endfor; ?>
+                <li class="page-item <?php echo $page >= $totalPages ? 'disabled' : ''; ?>">
+                    <a class="page-link" href="?tab=rooms&page=<?php echo $page + 1; ?>">Next</a>
+                </li>
+            </ul>
+        </nav>
+    </div>
+<?php endif; ?>
+</div>
+
+<!-- Add Room Modal -->
+<div class="modal fade" id="addRoomModal" tabindex="-1">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title"><i class="fas fa-plus-circle"></i> Add New Room</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
             </div>
-
-            <!-- View Room Modal -->
-            <div class="modal fade" id="viewRoomModal" tabindex="-1">
-                <div class="modal-dialog modal-lg">
-                    <div class="modal-content">
-                        <div class="modal-header">
-                            <h5 class="modal-title"><i class="fas fa-info-circle"></i> ព័ត៌មានលម្អិតបន្ទប់</h5>
-                            <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            <form id="addRoomForm" enctype="multipart/form-data">
+                <div class="modal-body">
+                    <div class="row">
+                        <div class="col-md-6 mb-3">
+                            <label class="form-label">Room Number *</label>
+                            <input type="text" name="room_number" class="form-control" required placeholder="e.g., 101, 102">
+                            <small class="text-muted">Room numbers 1-10 = Floor A, 11-20 = Floor B, etc.</small>
                         </div>
-                        <div class="modal-body" id="viewRoomContent">
-                            <!-- Dynamic content -->
+                        <div class="col-md-6 mb-3">
+                            <label class="form-label">Room Type *</label>
+                            <select name="room_type_id" class="form-select" required>
+                                <option value="">Select Type</option>
+                                <?php foreach ($roomTypes as $type): ?>
+                                    <option value="<?php echo $type['room_types_id']; ?>"><?php echo htmlspecialchars($type['type_name']); ?></option>
+                                <?php endforeach; ?>
+                            </select>
                         </div>
-                        <div class="modal-footer">
-                            <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">បិទ</button>
+                        <div class="col-md-6 mb-3">
+                            <label class="form-label">Price per Night ($) *</label>
+                            <input type="number" step="0.01" name="price_per_night" class="form-control" required>
                         </div>
-                    </div>
-                </div>
-            </div>
-
-            <!-- Edit Room Modal -->
-            <div class="modal fade" id="editRoomModal" tabindex="-1">
-                <div class="modal-dialog modal-lg">
-                    <div class="modal-content">
-                        <div class="modal-header">
-                            <h5 class="modal-title"><i class="fas fa-edit"></i> កែប្រែព័ត៌មានបន្ទប់</h5>
-                            <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                        <div class="col-md-6 mb-3">
+                            <label class="form-label">Capacity (Persons) *</label>
+                            <input type="number" name="capacity" class="form-control" required>
                         </div>
-                        <form id="editRoomForm" enctype="multipart/form-data">
-                            <input type="hidden" name="room_id" id="edit_room_id">
-                            <div class="modal-body">
-                                <div class="row">
-                                    <div class="col-md-6 mb-3">
-                                        <label class="form-label">លេខបន្ទប់ *</label>
-                                        <input type="text" name="room_number" id="edit_room_number" class="form-control" required>
-                                    </div>
-                                    <div class="col-md-6 mb-3">
-                                        <label class="form-label">ប្រភេទបន្ទប់ *</label>
-                                        <select name="room_type_id" id="edit_room_type_id" class="form-select" required>
-                                            <option value="">ជ្រើសរើសប្រភេទ</option>
-                                            <?php foreach($roomTypes as $type): ?>
-                                                <option value="<?php echo $type['room_types_id']; ?>"><?php echo htmlspecialchars($type['type_name']); ?></option>
-                                            <?php endforeach; ?>
-                                        </select>
-                                    </div>
-                                    <div class="col-md-6 mb-3">
-                                        <label class="form-label">តម្លៃក្នុងមួយយប់ ($) *</label>
-                                        <input type="number" step="0.01" name="price_per_night" id="edit_price_per_night" class="form-control" required>
-                                    </div>
-                                    <div class="col-md-6 mb-3">
-                                        <label class="form-label">សមត្ថភាព (នាក់) *</label>
-                                        <input type="number" name="capacity" id="edit_capacity" class="form-control" required>
-                                    </div>
-                                    <div class="col-12 mb-3">
-                                        <label class="form-label">គ្រឿងបរិក្ខារ</label>
-                                        <textarea name="equipments" id="edit_equipments" class="form-control" rows="2"></textarea>
-                                    </div>
-                                    <div class="col-12 mb-3">
-                                        <label class="form-label">ការពិពណ៌នាបន្ទប់</label>
-                                        <textarea name="room_description" id="edit_room_description" class="form-control" rows="3"></textarea>
-                                    </div>
-                                    <div class="col-12 mb-3">
-                                        <label class="form-label">រូបភាពបច្ចុប្បន្ន</label>
-                                        <div id="current_image_container"></div>
-                                        <label class="form-label mt-2">ផ្លាស់ប្តូររូបភាព</label>
-                                        <input type="file" name="room_image" class="form-control" accept="image/*">
-                                        <small class="text-muted">ទុកចោលប្រសិនបើមិនចង់ផ្លាស់ប្តូររូបភាព</small>
-                                    </div>
-                                </div>
-                            </div>
-                            <div class="modal-footer">
-                                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">បោះបង់</button>
-                                <button type="submit" class="btn btn-gold">រក្សាទុកការផ្លាស់ប្តូរ</button>
-                            </div>
-                        </form>
-                    </div>
-                </div>
-            </div>
-            <?php endif; ?>
-
-            <?php if($active_tab == 'bookings'): ?>
-            <!-- Manage Bookings Tab -->
-            <div class="row mb-4">
-                <div class="col-md-4">
-                    <select class="form-select" id="bookingFilter">
-                        <option value="all">ការកក់ទាំងអស់</option>
-                        <option value="pending">កំពុងរង់ចាំ</option>
-                        <option value="confirmed">បានបញ្ជាក់</option>
-                        <option value="cancelled">បានបោះបង់</option>
-                    </select>
-                </div>
-                <div class="col-md-4">
-                    <input type="text" id="searchBooking" class="form-control" placeholder="ស្វែងរកតាមឈ្មោះភ្ញៀវ...">
-                </div>
-            </div>
-
-            <div class="data-table">
-                <div class="table-responsive">
-                    <table class="table" id="bookingsTable">
-                        <thead>
-                            <tr>
-                                <th>លេខសម្គាល់</th>
-                                <th>ឈ្មោះភ្ញៀវ</th>
-                                <th>បន្ទប់</th>
-                                <th>ថ្ងៃចូល</th>
-                                <th>ថ្ងៃចេញ</th>
-                                <th>តម្លៃសរុប</th>
-                                <th>ស្ថានភាពកក់</th>
-                                <th>ស្ថានភាពបង់ប្រាក់</th>
-                                <th>សកម្មភាព</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            <?php foreach($bookings as $booking): ?>
-                            <tr data-status="<?php echo $booking['booking_status']; ?>">
-                                <td>#<?php echo $booking['booking_id']; ?></div>
-                                <td><?php echo htmlspecialchars($booking['user_name']); ?></div>
-                                <td><?php echo htmlspecialchars($booking['room_number']); ?></div>
-                                <td><?php echo date('d/m/Y', strtotime($booking['checkin_date'])); ?></div>
-                                <td><?php echo date('d/m/Y', strtotime($booking['checkout_date'])); ?></div>
-                                <td>$<?php echo number_format($booking['total_payment'], 2); ?></div>
-                                <td>
-                                    <span class="badge-status <?php echo $booking['booking_status'] == 'pending' ? 'badge-pending' : ($booking['booking_status'] == 'confirmed' ? 'badge-confirmed' : 'badge-cancelled'); ?>">
-                                        <?php echo $booking['booking_status'] == 'pending' ? 'កំពុងរង់ចាំ' : ($booking['booking_status'] == 'confirmed' ? 'បានបញ្ជាក់' : 'បានបោះបង់'); ?>
-                                    </span>
-                                 </div>
-                                <td>
-                                    <span class="badge-status <?php echo $booking['payment_status'] == 'paid' ? 'badge-confirmed' : 'badge-pending'; ?>">
-                                        <?php echo $booking['payment_status'] == 'paid' ? 'បានបង់ប្រាក់' : 'មិនទាន់បង់'; ?>
-                                    </span>
-                                 </div>
-                                <td>
-                                    <button class="btn btn-sm btn-info btn-action view-booking-details" data-id="<?php echo $booking['booking_id']; ?>">
-                                        <i class="fas fa-eye"></i>
-                                    </button>
-                                    <?php if($booking['booking_status'] == 'pending'): ?>
-                                    <button class="btn btn-sm btn-success btn-action confirm-booking-btn" data-id="<?php echo $booking['booking_id']; ?>">
-                                        <i class="fas fa-check"></i>
-                                    </button>
-                                    <?php endif; ?>
-                                    <?php if($booking['booking_status'] == 'pending' || $booking['booking_status'] == 'confirmed'): ?>
-                                    <button class="btn btn-sm btn-danger btn-action cancel-booking-btn" data-id="<?php echo $booking['booking_id']; ?>">
-                                        <i class="fas fa-times"></i>
-                                    </button>
-                                    <?php endif; ?>
-                                    <?php if($booking['payment_status'] == 'unpaid' && $booking['booking_status'] == 'confirmed'): ?>
-                                    <button class="btn btn-sm btn-warning btn-action update-payment-btn" data-id="<?php echo $booking['booking_id']; ?>">
-                                        <i class="fas fa-money-bill"></i>
-                                    </button>
-                                    <?php endif; ?>
-                                 </div>
-                            </tr>
-                            <?php endforeach; ?>
-                        </tbody>
-                    </table>
-                </div>
-            </div>
-
-            <!-- Booking Details Modal -->
-            <div class="modal fade" id="bookingDetailsModal" tabindex="-1">
-                <div class="modal-dialog modal-lg">
-                    <div class="modal-content">
-                        <div class="modal-header">
-                            <h5 class="modal-title"><i class="fas fa-receipt"></i> ព័ត៌មានលម្អិតការកក់</h5>
-                            <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                        <div class="col-12 mb-3">
+                            <label class="form-label">Amenities</label>
+                            <textarea name="equipments" class="form-control" rows="2" placeholder="WiFi, Air Conditioner, TV, Mini Bar, Hot Water..."></textarea>
                         </div>
-                        <div class="modal-body" id="bookingDetailsContent">
-                            <!-- Dynamic content -->
+                        <div class="col-12 mb-3">
+                            <label class="form-label">Room Description</label>
+                            <textarea name="room_description" class="form-control" rows="3"></textarea>
                         </div>
-                        <div class="modal-footer">
-                            <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">បិទ</button>
-                            <button type="button" class="btn btn-gold" id="printBooking">បោះពុម្ពវិក្កយបត្រ</button>
+                        <div class="col-12 mb-3">
+                            <label class="form-label">Room Image</label>
+                            <input type="file" name="room_image" class="form-control" accept="image/*">
+                            <small class="text-muted">Accepted: JPG, JPEG, PNG, GIF (Max 5MB)</small>
+                            <div id="imagePreview" class="mt-2"></div>
                         </div>
                     </div>
                 </div>
-            </div>
-            <?php endif; ?>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-outline-custom" data-bs-dismiss="modal">Cancel</button>
+                    <button type="submit" class="btn btn-primary-custom">Add Room</button>
+                </div>
+            </form>
         </div>
     </div>
+</div>
 
-    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
-    <script>
-        // ============================================
-        // ROOM MANAGEMENT FUNCTIONS
-        // ============================================
-        
-        // Preview image before upload
-        document.querySelector('input[name="room_image"]')?.addEventListener('change', function(e) {
-            const preview = document.getElementById('imagePreview');
-            preview.innerHTML = '';
-            if (this.files && this.files[0]) {
-                const reader = new FileReader();
-                reader.onload = function(e) {
-                    const img = document.createElement('img');
-                    img.src = e.target.result;
-                    img.style.maxWidth = '200px';
-                    img.style.borderRadius = '8px';
-                    img.style.marginTop = '10px';
-                    preview.appendChild(img);
-                };
-                reader.readAsDataURL(this.files[0]);
+<!-- View Room Modal -->
+<div class="modal fade" id="viewRoomModal" tabindex="-1">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title"><i class="fas fa-info-circle"></i> Room Details</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body" id="viewRoomContent"></div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-outline-custom" data-bs-dismiss="modal">Close</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Edit Room Modal -->
+<div class="modal fade" id="editRoomModal" tabindex="-1">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title"><i class="fas fa-edit"></i> Edit Room</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <form id="editRoomForm" enctype="multipart/form-data">
+                <input type="hidden" name="room_id" id="edit_room_id">
+                <div class="modal-body">
+                    <div class="row">
+                        <div class="col-md-6 mb-3">
+                            <label class="form-label">Room Number *</label>
+                            <input type="text" name="room_number" id="edit_room_number" class="form-control" required>
+                        </div>
+                        <div class="col-md-6 mb-3">
+                            <label class="form-label">Room Type *</label>
+                            <select name="room_type_id" id="edit_room_type_id" class="form-select" required>
+                                <?php foreach ($roomTypes as $type): ?>
+                                    <option value="<?php echo $type['room_types_id']; ?>"><?php echo htmlspecialchars($type['type_name']); ?></option>
+                                <?php endforeach; ?>
+                            </select>
+                        </div>
+                        <div class="col-md-6 mb-3">
+                            <label class="form-label">Price per Night ($) *</label>
+                            <input type="number" step="0.01" name="price_per_night" id="edit_price_per_night" class="form-control" required>
+                        </div>
+                        <div class="col-md-6 mb-3">
+                            <label class="form-label">Capacity (Persons) *</label>
+                            <input type="number" name="capacity" id="edit_capacity" class="form-control" required>
+                        </div>
+                        <div class="col-12 mb-3">
+                            <label class="form-label">Amenities</label>
+                            <textarea name="equipments" id="edit_equipments" class="form-control" rows="2"></textarea>
+                        </div>
+                        <div class="col-12 mb-3">
+                            <label class="form-label">Room Description</label>
+                            <textarea name="room_description" id="edit_room_description" class="form-control" rows="3"></textarea>
+                        </div>
+                        <div class="col-12 mb-3">
+                            <label class="form-label">Current Image</label>
+                            <div id="current_image_container"></div>
+                            <label class="form-label mt-2">Change Image</label>
+                            <input type="file" name="room_image" class="form-control" accept="image/*">
+                            <small class="text-muted">Leave empty to keep current image</small>
+                        </div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-outline-custom" data-bs-dismiss="modal">Cancel</button>
+                    <button type="submit" class="btn btn-primary-custom">Save Changes</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+<?php endif; ?>
+
+<?php if ($active_tab == 'bookings'): ?>
+    <!-- Manage Bookings Tab -->
+    <div class="data-card">
+        <div class="data-card-header">
+            <h5><i class="fas fa-calendar-alt"></i> Booking Management</h5>
+        </div>
+        <div class="table-responsive">
+            <table class="table data-table" id="bookingsTable">
+                <thead>
+                    <tr>
+                        <th>ID</th>
+                        <th>Guest</th>
+                        <th>Room</th>
+                        <th>Check-in</th>
+                        <th>Check-out</th>
+                        <th>Nights</th>
+                        <th>Total</th>
+                        <th>Booking Status</th>
+                        <th>Payment</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <?php foreach ($bookings as $booking):
+                        $booking_status_display = $booking['booking_status'];
+                        if ($booking['checkout_date'] < date('Y-m-d') && $booking['booking_status'] == 'confirmed') {
+                            $booking_status_display = 'completed';
+                        }
+                    ?>
+                        <tr data-status="<?php echo $booking['booking_status']; ?>">
+                            <td>#<?php echo $booking['booking_id']; ?></td>
+                            <td><?php echo htmlspecialchars($booking['user_name']); ?></td>
+                            <td><?php echo htmlspecialchars($booking['room_number']); ?></td>
+                            <td><?php echo date('d/m/Y', strtotime($booking['checkin_date'])); ?></td>
+                            <td><?php echo date('d/m/Y', strtotime($booking['checkout_date'])); ?></td>
+                            <td><?php echo $booking['nights']; ?> nights
+        </div>
+        <td>$<?php echo number_format($booking['total_payment'], 2); ?>
+    </div>
+    <td>
+        <span class="badge-status <?php
+                                    echo $booking_status_display == 'pending' ? 'badge-pending' : ($booking_status_display == 'confirmed' ? 'badge-confirmed' : ($booking_status_display == 'cancelled' ? 'badge-cancelled' : 'badge-completed'));
+                                    ?>">
+            <?php
+                        echo $booking_status_display == 'pending' ? 'Pending' : ($booking_status_display == 'confirmed' ? 'Confirmed' : ($booking_status_display == 'cancelled' ? 'Cancelled' : 'Completed'));
+            ?>
+        </span>
+        </div>
+    <td>
+        <span class="badge-status <?php echo $booking['payment_status'] == 'paid' ? 'badge-confirmed' : 'badge-pending'; ?>">
+            <?php echo $booking['payment_status'] == 'paid' ? 'Paid' : 'Unpaid'; ?>
+        </span>
+        </div>
+    <td>
+        <button class="btn-action view-booking" data-id="<?php echo $booking['booking_id']; ?>" title="View Details">
+            <i class="fas fa-eye"></i>
+        </button>
+        <?php if ($booking_status_display == 'pending'): ?>
+            <form method="POST" style="display: inline-block;" class="confirm-form">
+                <input type="hidden" name="booking_id" value="<?php echo $booking['booking_id']; ?>">
+                <input type="hidden" name="confirm_booking" value="1">
+                <button type="submit" class="btn-action" title="Confirm Booking">
+                    <i class="fas fa-check" style="color: #28a745;"></i>
+                </button>
+            </form>
+        <?php endif; ?>
+        <?php if ($booking_status_display == 'pending' || $booking_status_display == 'confirmed'): ?>
+            <form method="POST" style="display: inline-block;" class="cancel-form">
+                <input type="hidden" name="booking_id" value="<?php echo $booking['booking_id']; ?>">
+                <input type="hidden" name="cancel_booking" value="1">
+                <button type="submit" class="btn-action" title="Cancel Booking">
+                    <i class="fas fa-times" style="color: #dc3545;"></i>
+                </button>
+            </form>
+        <?php endif; ?>
+        <?php if ($booking['payment_status'] == 'unpaid' && $booking_status_display == 'confirmed'): ?>
+            <form method="POST" style="display: inline-block;" class="payment-form">
+                <input type="hidden" name="booking_id" value="<?php echo $booking['booking_id']; ?>">
+                <input type="hidden" name="verify_payment" value="1">
+                <button type="submit" class="btn-action" title="Verify Payment">
+                    <i class="fas fa-money-bill" style="color: #ffc107;"></i>
+                </button>
+            </form>
+        <?php endif; ?>
+        </div>
+        </tr>
+    <?php endforeach; ?>
+    </tbody>
+    </table>
+    </div>
+    </div>
+
+    <!-- Booking Details Modal -->
+    <div class="modal fade" id="bookingDetailsModal" tabindex="-1">
+        <div class="modal-dialog modal-lg">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title"><i class="fas fa-receipt"></i> Booking Details</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body" id="bookingDetailsContent"></div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-outline-custom" data-bs-dismiss="modal">Close</button>
+                    <button type="button" class="btn btn-primary-custom" id="printBooking">Print Invoice</button>
+                </div>
+            </div>
+        </div>
+    </div>
+<?php endif; ?>
+</div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+<script>
+    // ============================================
+    // ROOM MANAGEMENT FUNCTIONS
+    // ============================================
+
+    // Preview image before upload
+    document.querySelector('input[name="room_image"]')?.addEventListener('change', function(e) {
+        const preview = document.getElementById('imagePreview');
+        preview.innerHTML = '';
+        if (this.files && this.files[0]) {
+            const reader = new FileReader();
+            reader.onload = function(e) {
+                const img = document.createElement('img');
+                img.src = e.target.result;
+                img.style.maxWidth = '200px';
+                img.style.borderRadius = '8px';
+                img.style.marginTop = '10px';
+                preview.appendChild(img);
+            };
+            reader.readAsDataURL(this.files[0]);
+        }
+    });
+
+    // Add Room with AJAX
+    document.getElementById('addRoomForm')?.addEventListener('submit', async function(e) {
+        e.preventDefault();
+
+        const formData = new FormData(this);
+        formData.append('action', 'add_room');
+
+        const result = await Swal.fire({
+            title: 'Confirm Add Room',
+            text: 'Are you sure you want to add this room?',
+            icon: 'question',
+            showCancelButton: true,
+            confirmButtonColor: '#543414',
+            cancelButtonColor: '#6c757d',
+            confirmButtonText: 'Yes, Add',
+            cancelButtonText: 'Cancel'
+        });
+
+        if (result.isConfirmed) {
+            Swal.fire({
+                title: 'Processing...',
+                allowOutsideClick: false,
+                didOpen: () => {
+                    Swal.showLoading();
+                }
+            });
+
+            try {
+                const response = await fetch('process_room.php', {
+                    method: 'POST',
+                    body: formData
+                });
+                const data = await response.json();
+
+                Swal.close();
+
+                if (data.success) {
+                    Swal.fire('Success!', data.message, 'success').then(() => {
+                        location.reload();
+                    });
+                } else {
+                    Swal.fire('Error!', data.message, 'error');
+                }
+            } catch (error) {
+                Swal.close();
+                Swal.fire('Error!', 'Failed to add room', 'error');
+            }
+        }
+    });
+
+    // View Room Details
+    document.querySelectorAll('.view-room').forEach(btn => {
+        btn.addEventListener('click', async function() {
+            const roomId = this.dataset.id;
+
+            try {
+                const response = await fetch(`get_room_details.php?id=${roomId}`);
+                const room = await response.json();
+
+                if (room) {
+                    const deposit = room.price_per_night * 0.30;
+                    const modalContent = `
+                            <div class="row">
+                                <div class="col-md-5">
+                                    ${room.room_image ? `<img src="../${room.room_image}" class="img-fluid rounded mb-3" style="width: 100%;">` : '<div class="alert alert-secondary">No image available</div>'}
+                                </div>
+                                <div class="col-md-7">
+                                    <table class="table table-bordered">
+                                        <tr><th>Room Number:</th><td>${room.room_number} (Floor ${room.floor})</td></tr>
+                                        <tr><th>Room Type:</th><td>${room.type_name}</td></tr>
+                                        <tr><th>Price per Night:</th><td>$${parseFloat(room.price_per_night).toFixed(2)}</td></tr>
+                                        <tr><th>Deposit (30%):</th><td>$${deposit.toFixed(2)}</td></tr>
+                                        <tr><th>Capacity:</th><td>${room.capacity} persons</td></tr>
+                                        <tr><th>Status:</th><td>${room.room_status == 'available' ? 'Available' : (room.room_status == 'booked' ? 'Booked' : 'Maintenance')}</td></tr>
+                                        <tr><th>Amenities:</th><td>${room.equipments || 'None'}</td></tr>
+                                        <tr><th>Description:</th><td>${room.room_description || 'None'}</td></tr>
+                                    </table>
+                                </div>
+                            </div>
+                        `;
+                    document.getElementById('viewRoomContent').innerHTML = modalContent;
+                    new bootstrap.Modal(document.getElementById('viewRoomModal')).show();
+                }
+            } catch (error) {
+                Swal.fire('Error!', 'Could not fetch room details', 'error');
             }
         });
-        
-        // Add Room with AJAX
-        // Add Room with AJAX - Updated version
-        document.getElementById('addRoomForm')?.addEventListener('submit', async function(e) {
-            e.preventDefault();
-            
-            // Validate required fields
-            const roomNumber = this.querySelector('[name="room_number"]').value.trim();
-            const roomType = this.querySelector('[name="room_type_id"]').value;
-            const price = this.querySelector('[name="price_per_night"]').value;
-            const capacity = this.querySelector('[name="capacity"]').value;
-            
-            if (!roomNumber) {
-                Swal.fire('កំហុស!', 'សូមបញ្ចូលលេខបន្ទប់', 'error');
-                return;
+    });
+
+    // Edit Room - Load data
+    document.querySelectorAll('.edit-room').forEach(btn => {
+        btn.addEventListener('click', async function() {
+            const roomId = this.dataset.id;
+
+            try {
+                const response = await fetch(`get_room_details.php?id=${roomId}`);
+                const room = await response.json();
+
+                if (room) {
+                    document.getElementById('edit_room_id').value = room.room_id;
+                    document.getElementById('edit_room_number').value = room.room_number;
+                    document.getElementById('edit_room_type_id').value = room.room_type_id;
+                    document.getElementById('edit_price_per_night').value = room.price_per_night;
+                    document.getElementById('edit_capacity').value = room.capacity;
+                    document.getElementById('edit_equipments').value = room.equipments || '';
+                    document.getElementById('edit_room_description').value = room.room_description || '';
+
+                    const imgContainer = document.getElementById('current_image_container');
+                    if (room.room_image) {
+                        imgContainer.innerHTML = `<img src="../${room.room_image}" class="current-image" alt="Current Room Image">`;
+                    } else {
+                        imgContainer.innerHTML = '<p class="text-muted">No image</p>';
+                    }
+
+                    new bootstrap.Modal(document.getElementById('editRoomModal')).show();
+                }
+            } catch (error) {
+                Swal.fire('Error!', 'Could not fetch room details', 'error');
             }
-            if (!roomType) {
-                Swal.fire('កំហុស!', 'សូមជ្រើសរើសប្រភេទបន្ទប់', 'error');
-                return;
+        });
+    });
+
+    // Edit Room - Submit
+    document.getElementById('editRoomForm')?.addEventListener('submit', async function(e) {
+        e.preventDefault();
+
+        const result = await Swal.fire({
+            title: 'Confirm Changes',
+            text: 'Are you sure you want to update this room?',
+            icon: 'question',
+            showCancelButton: true,
+            confirmButtonColor: '#543414',
+            cancelButtonColor: '#6c757d',
+            confirmButtonText: 'Yes, Update',
+            cancelButtonText: 'Cancel'
+        });
+
+        if (result.isConfirmed) {
+            const formData = new FormData(this);
+            formData.append('action', 'update_room');
+
+            Swal.fire({
+                title: 'Processing...',
+                allowOutsideClick: false,
+                didOpen: () => {
+                    Swal.showLoading();
+                }
+            });
+
+            try {
+                const response = await fetch('process_room.php', {
+                    method: 'POST',
+                    body: formData
+                });
+                const data = await response.json();
+
+                Swal.close();
+
+                if (data.success) {
+                    Swal.fire('Success!', data.message, 'success').then(() => {
+                        location.reload();
+                    });
+                } else {
+                    Swal.fire('Error!', data.message, 'error');
+                }
+            } catch (error) {
+                Swal.close();
+                Swal.fire('Error!', 'Failed to update room', 'error');
             }
-            if (!price || price <= 0) {
-                Swal.fire('កំហុស!', 'សូមបញ្ចូលតម្លៃត្រឹមត្រូវ', 'error');
-                return;
-            }
-            if (!capacity || capacity <= 0) {
-                Swal.fire('កំហុស!', 'សូមបញ្ចូលសមត្ថភាពបន្ទប់', 'error');
-                return;
-            }
-            
+        }
+    });
+
+    // Update Room Status
+    document.querySelectorAll('.status-select').forEach(select => {
+        select.addEventListener('change', async function() {
+            const roomId = this.dataset.id;
+            const newStatus = this.value;
+            const statusText = newStatus === 'available' ? 'Available' : (newStatus === 'booked' ? 'Booked' : 'Maintenance');
+
             const result = await Swal.fire({
-                title: 'បញ្ជាក់ការបន្ថែម',
-                text: 'តើអ្នកពិតជាចង់បន្ថែមបន្ទប់ថ្មីមែនទេ?',
+                title: 'Confirm Status Change',
+                text: `Change room status to "${statusText}"?`,
                 icon: 'question',
                 showCancelButton: true,
                 confirmButtonColor: '#543414',
-                cancelButtonColor: '#d33',
-                confirmButtonText: 'បាទ/ចាស',
-                cancelButtonText: 'បោះបង់'
+                cancelButtonColor: '#6c757d',
+                confirmButtonText: 'Yes, Change',
+                cancelButtonText: 'Cancel'
             });
-            
+
             if (result.isConfirmed) {
                 Swal.fire({
-                    title: 'កំពុងដំណើរការ...',
+                    title: 'Processing...',
                     allowOutsideClick: false,
                     didOpen: () => {
                         Swal.showLoading();
                     }
                 });
-                
-                const formData = new FormData(this);
-                formData.append('action', 'add_room');
-                
+
                 try {
                     const response = await fetch('process_room.php', {
                         method: 'POST',
-                        body: formData
+                        headers: {
+                            'Content-Type': 'application/x-www-form-urlencoded'
+                        },
+                        body: `action=update_status&room_id=${roomId}&room_status=${newStatus}`
                     });
                     const data = await response.json();
-                    
+
+                    Swal.close();
+
                     if (data.success) {
-                        Swal.fire('ជោគជ័យ!', data.message, 'success').then(() => {
-                            location.reload();
-                        });
+                        Swal.fire('Success!', data.message, 'success');
                     } else {
-                        Swal.fire('កំហុស!', data.message, 'error');
-                    }
-                } catch (error) {
-                    console.error('Error:', error);
-                    Swal.fire('កំហុស!', 'មានបញ្ហាក្នុងការបន្ថែមបន្ទប់', 'error');
-                }
-            }
-        });
-        
-        // View Room Details
-        document.querySelectorAll('.view-room').forEach(btn => {
-            btn.addEventListener('click', async function() {
-                const roomId = this.dataset.id;
-                
-                try {
-                    const response = await fetch(`get_room_details.php?id=${roomId}`);
-                    const room = await response.json();
-                    
-                    if (room) {
-                        const modalContent = `
-                            <div class="row">
-                                <div class="col-md-6">
-                                    ${room.room_image ? `<img src="../${room.room_image}" class="img-fluid rounded mb-3" alt="Room Image">` : '<div class="alert alert-secondary">គ្មានរូបភាព</div>'}
-                                </div>
-                                <div class="col-md-6">
-                                    <table class="table table-bordered">
-                                        <tr><th>លេខបន្ទប់:</th><td>${room.room_number}</td></tr>
-                                        <tr><th>ប្រភេទ:</th><td>${room.type_name}</td></tr>
-                                        <tr><th>តម្លៃក្នុងមួយយប់:</th><td>$${parseFloat(room.price_per_night).toFixed(2)}</td></tr>
-                                        <tr><th>សមត្ថភាព:</th><td>${room.capacity} នាក់</td></tr>
-                                        <tr><th>ស្ថានភាព:</th><td>${room.room_status == 'available' ? 'ទំនេរ' : (room.room_status == 'booked' ? 'បានកក់' : 'ថែទាំ')}</td></tr>
-                                        <tr><th>គ្រឿងបរិក្ខារ:</th><td>${room.equipments || 'មិនមាន'}</td></tr>
-                                        <tr><th>ការពិពណ៌នា:</th><td>${room.room_description || 'មិនមាន'}</td></tr>
-                                    </table>
-                                </div>
-                            </div>
-                        `;
-                        document.getElementById('viewRoomContent').innerHTML = modalContent;
-                        new bootstrap.Modal(document.getElementById('viewRoomModal')).show();
-                    }
-                } catch (error) {
-                    Swal.fire('កំហុស!', 'មិនអាចទាញយកព័ត៌មានបន្ទប់បាន', 'error');
-                }
-            });
-        });
-        
-        // Edit Room - Load data
-        document.querySelectorAll('.edit-room').forEach(btn => {
-            btn.addEventListener('click', async function() {
-                const roomId = this.dataset.id;
-                
-                try {
-                    const response = await fetch(`get_room_details.php?id=${roomId}`);
-                    const room = await response.json();
-                    
-                    if (room) {
-                        document.getElementById('edit_room_id').value = room.room_id;
-                        document.getElementById('edit_room_number').value = room.room_number;
-                        document.getElementById('edit_room_type_id').value = room.room_type_id;
-                        document.getElementById('edit_price_per_night').value = room.price_per_night;
-                        document.getElementById('edit_capacity').value = room.capacity;
-                        document.getElementById('edit_equipments').value = room.equipments || '';
-                        document.getElementById('edit_room_description').value = room.room_description || '';
-                        
-                        const imgContainer = document.getElementById('current_image_container');
-                        if (room.room_image) {
-                            imgContainer.innerHTML = `<img src="../${room.room_image}" class="current-image" alt="Current Room Image">`;
-                        } else {
-                            imgContainer.innerHTML = '<p class="text-muted">គ្មានរូបភាព</p>';
-                        }
-                        
-                        new bootstrap.Modal(document.getElementById('editRoomModal')).show();
-                    }
-                } catch (error) {
-                    Swal.fire('កំហុស!', 'មិនអាចទាញយកព័ត៌មានបន្ទប់បាន', 'error');
-                }
-            });
-        });
-        
-        // Edit Room - Submit
-        document.getElementById('editRoomForm')?.addEventListener('submit', async function(e) {
-            e.preventDefault();
-            
-            const result = await Swal.fire({
-                title: 'បញ្ជាក់ការកែប្រែ',
-                text: 'តើអ្នកពិតជាចង់កែប្រែព័ត៌មានបន្ទប់នេះមែនទេ?',
-                icon: 'question',
-                showCancelButton: true,
-                confirmButtonColor: '#543414',
-                cancelButtonColor: '#d33',
-                confirmButtonText: 'បាទ/ចាស',
-                cancelButtonText: 'បោះបង់'
-            });
-            
-            if (result.isConfirmed) {
-                const formData = new FormData(this);
-                formData.append('action', 'update_room');
-                
-                try {
-                    const response = await fetch('process_room.php', {
-                        method: 'POST',
-                        body: formData
-                    });
-                    const data = await response.json();
-                    
-                    if (data.success) {
-                        Swal.fire('ជោគជ័យ!', data.message, 'success').then(() => {
-                            location.reload();
-                        });
-                    } else {
-                        Swal.fire('កំហុស!', data.message, 'error');
-                    }
-                } catch (error) {
-                    Swal.fire('កំហុស!', 'មានបញ្ហាក្នុងការកែប្រែបន្ទប់', 'error');
-                }
-            }
-        });
-        
-        // Update Room Status with confirmation
-        // Update Room Status with confirmation - Updated version
-            document.querySelectorAll('.status-select').forEach(select => {
-                select.addEventListener('change', async function() {
-                    const roomId = this.dataset.id;
-                    const newStatus = this.value;
-                    const statusText = newStatus === 'available' ? 'ទំនេរ' : (newStatus === 'booked' ? 'បានកក់' : 'ថែទាំ');
-                    
-                    const result = await Swal.fire({
-                        title: 'បញ្ជាក់ការផ្លាស់ប្តូរ',
-                        text: `តើអ្នកចង់ប្តូរស្ថានភាពបន្ទប់ទៅជា "${statusText}" មែនទេ?`,
-                        icon: 'question',
-                        showCancelButton: true,
-                        confirmButtonColor: '#543414',
-                        cancelButtonColor: '#d33',
-                        confirmButtonText: 'បាទ/ចាស',
-                        cancelButtonText: 'បោះបង់'
-                    });
-                    
-                    if (result.isConfirmed) {
-                        Swal.fire({
-                            title: 'កំពុងដំណើរការ...',
-                            allowOutsideClick: false,
-                            didOpen: () => {
-                                Swal.showLoading();
-                            }
-                        });
-                        
-                        try {
-                            const response = await fetch('process_room.php', {
-                                method: 'POST',
-                                headers: {
-                                    'Content-Type': 'application/x-www-form-urlencoded',
-                                },
-                                body: `action=update_status&room_id=${roomId}&room_status=${newStatus}`
-                            });
-                            const data = await response.json();
-                            
-                            Swal.close();
-                            
-                            if (data.success) {
-                                Swal.fire('ជោគជ័យ!', data.message, 'success');
-                            } else {
-                                Swal.fire('កំហុស!', data.message, 'error');
-                                // Reload to revert select value
-                                location.reload();
-                            }
-                        } catch (error) {
-                            Swal.close();
-                            Swal.fire('កំហុស!', 'មានបញ្ហាក្នុងការផ្លាស់ប្តូរស្ថានភាព', 'error');
-                            location.reload();
-                        }
-                    } else {
-                        // Reload to revert select value
+                        Swal.fire('Error!', data.message, 'error');
                         location.reload();
                     }
-                });
+                } catch (error) {
+                    Swal.close();
+                    Swal.fire('Error!', 'Failed to update status', 'error');
+                    location.reload();
+                }
+            } else {
+                location.reload();
+            }
+        });
+    });
+
+    // Delete Room
+    document.querySelectorAll('.delete-room').forEach(btn => {
+        btn.addEventListener('click', async function() {
+            const roomId = this.dataset.id;
+
+            const result = await Swal.fire({
+                title: 'Confirm Delete',
+                text: 'Are you sure you want to delete this room? This action cannot be undone!',
+                icon: 'warning',
+                showCancelButton: true,
+                confirmButtonColor: '#dc3545',
+                cancelButtonColor: '#6c757d',
+                confirmButtonText: 'Yes, Delete',
+                cancelButtonText: 'Cancel'
             });
 
-        // Delete Room with confirmation
-        document.querySelectorAll('.delete-room').forEach(btn => {
-            btn.addEventListener('click', async function() {
-                const roomId = this.dataset.id;
-                
-                const result = await Swal.fire({
-                    title: 'បញ្ជាក់ការលុប',
-                    text: 'តើអ្នកពិតជាចង់លុបបន្ទប់នេះមែនទេ? សកម្មភាពនេះមិនអាចត្រឡប់វិញបានទេ!',
-                    icon: 'warning',
-                    showCancelButton: true,
-                    confirmButtonColor: '#d33',
-                    cancelButtonColor: '#3085d6',
-                    confirmButtonText: 'បាទ/ចាស, លុប!',
-                    cancelButtonText: 'បោះបង់'
-                });
-                
-                if (result.isConfirmed) {
-                    try {
-                        const response = await fetch('process_room.php', {
-                            method: 'POST',
-                            headers: {
-                                'Content-Type': 'application/x-www-form-urlencoded',
-                            },
-                            body: `action=delete_room&room_id=${roomId}`
-                        });
-                        const data = await response.json();
-                        
-                        if (data.success) {
-                            Swal.fire('លុបដោយជោគជ័យ!', data.message, 'success').then(() => {
-                                document.getElementById(`room-row-${roomId}`)?.remove();
-                            });
-                        } else {
-                            Swal.fire('កំហុស!', data.message, 'error');
-                        }
-                    } catch (error) {
-                        Swal.fire('កំហុស!', 'មានបញ្ហាក្នុងការលុបបន្ទប់', 'error');
-                    }
-                }
-            });
-        });
-        
-        // ============================================
-        // BOOKING MANAGEMENT FUNCTIONS
-        // ============================================
-        
-        // Booking Filter
-        const filterSelect = document.getElementById('bookingFilter');
-        const searchInput = document.getElementById('searchBooking');
-        const tableRows = document.querySelectorAll('#bookingsTable tbody tr');
-        
-        if(filterSelect) {
-            filterSelect.addEventListener('change', function() {
-                const filter = this.value;
-                tableRows.forEach(row => {
-                    if(filter === 'all' || row.dataset.status === filter) {
-                        row.style.display = '';
-                    } else {
-                        row.style.display = 'none';
-                    }
-                });
-            });
-        }
-        
-        if(searchInput) {
-            searchInput.addEventListener('keyup', function() {
-                const search = this.value.toLowerCase();
-                tableRows.forEach(row => {
-                    const guestName = row.cells[1].innerText.toLowerCase();
-                    if(guestName.includes(search)) {
-                        row.style.display = '';
-                    } else {
-                        row.style.display = 'none';
-                    }
-                });
-            });
-        }
-        
-        // View Booking Details
-        document.querySelectorAll('.view-booking-details').forEach(btn => {
-            btn.addEventListener('click', async function() {
-                const bookingId = this.dataset.id;
-                
+            if (result.isConfirmed) {
                 try {
-                    const response = await fetch(`get_booking_details.php?id=${bookingId}`);
-                    const booking = await response.json();
-                    
-                    if (booking) {
-                        const modalContent = `
+                    const response = await fetch('process_room.php', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/x-www-form-urlencoded'
+                        },
+                        body: `action=delete_room&room_id=${roomId}`
+                    });
+                    const data = await response.json();
+
+                    if (data.success) {
+                        Swal.fire('Deleted!', data.message, 'success').then(() => {
+                            document.getElementById(`room-row-${roomId}`)?.remove();
+                        });
+                    } else {
+                        Swal.fire('Error!', data.message, 'error');
+                    }
+                } catch (error) {
+                    Swal.fire('Error!', 'Failed to delete room', 'error');
+                }
+            }
+        });
+    });
+
+    // Confirm forms with confirmation
+    document.querySelectorAll('.confirm-form').forEach(form => {
+        form.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const result = await Swal.fire({
+                title: 'Confirm Booking',
+                text: 'Are you sure you want to confirm this booking?',
+                icon: 'question',
+                showCancelButton: true,
+                confirmButtonColor: '#28a745',
+                cancelButtonColor: '#6c757d',
+                confirmButtonText: 'Yes, Confirm',
+                cancelButtonText: 'Cancel'
+            });
+            if (result.isConfirmed) form.submit();
+        });
+    });
+
+    document.querySelectorAll('.cancel-form').forEach(form => {
+        form.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const result = await Swal.fire({
+                title: 'Cancel Booking',
+                text: 'Are you sure you want to cancel this booking?',
+                icon: 'warning',
+                showCancelButton: true,
+                confirmButtonColor: '#dc3545',
+                cancelButtonColor: '#6c757d',
+                confirmButtonText: 'Yes, Cancel',
+                cancelButtonText: 'No'
+            });
+            if (result.isConfirmed) form.submit();
+        });
+    });
+
+    document.querySelectorAll('.payment-form').forEach(form => {
+        form.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const result = await Swal.fire({
+                title: 'Verify Payment',
+                text: 'Confirm that payment has been received?',
+                icon: 'question',
+                showCancelButton: true,
+                confirmButtonColor: '#ffc107',
+                cancelButtonColor: '#6c757d',
+                confirmButtonText: 'Yes, Verify',
+                cancelButtonText: 'Cancel'
+            });
+            if (result.isConfirmed) form.submit();
+        });
+    });
+
+    // View Booking Details
+    document.querySelectorAll('.view-booking').forEach(btn => {
+        btn.addEventListener('click', async function() {
+            const bookingId = this.dataset.id;
+
+            try {
+                const response = await fetch(`get_booking_details.php?id=${bookingId}`);
+                const booking = await response.json();
+
+                if (booking) {
+                    const deposit = booking.total_payment * 0.30;
+                    const remaining = booking.total_payment - deposit;
+
+                    const modalContent = `
                             <div class="row">
                                 <div class="col-md-6">
+                                    <h6>Guest Information</h6>
                                     <table class="table table-bordered">
-                                        <tr><th>លេខសម្គាល់កក់:</th><td>#${booking.booking_id}</td></tr>
-                                        <tr><th>ឈ្មោះភ្ញៀវ:</th><td>${booking.user_name}</td></tr>
-                                        <tr><th>អ៊ីមែល:</th><td>${booking.email || 'មិនមាន'}</td></tr>
-                                        <tr><th>លេខទូរស័ព្ទ:</th><td>${booking.phone_number || 'មិនមាន'}</td></tr>
-                                        <tr><th>លេខបន្ទប់:</th><td>${booking.room_number}</td></tr>
-                                        <tr><th>ប្រភេទបន្ទប់:</th><td>${booking.type_name}</td></tr>
+                                        <tr><th>Name:</th><td>${booking.user_name}</td></tr>
+                                        <tr><th>Email:</th><td>${booking.email || 'N/A'}</td></tr>
+                                        <tr><th>Phone:</th><td>${booking.phone_number || 'N/A'}</td></tr>
                                     </table>
                                 </div>
                                 <div class="col-md-6">
+                                    <h6>Room Information</h6>
                                     <table class="table table-bordered">
-                                        <tr><th>ថ្ងៃចូល:</th><td>${new Date(booking.checkin_date).toLocaleDateString()}</td></tr>
-                                        <tr><th>ថ្ងៃចេញ:</th><td>${new Date(booking.checkout_date).toLocaleDateString()}</td></tr>
-                                        <tr><th>ចំនួនយប់:</th><td>${booking.nights} យប់</td></tr>
-                                        <tr><th>តម្លៃសរុប:</th><td>$${parseFloat(booking.total_payment).toFixed(2)}</td></tr>
-                                        <tr><th>ស្ថានភាពកក់:</th><td>${booking.booking_status == 'pending' ? 'កំពុងរង់ចាំ' : (booking.booking_status == 'confirmed' ? 'បានបញ្ជាក់' : 'បានបោះបង់')}</td></tr>
-                                        <tr><th>ស្ថានភាពបង់ប្រាក់:</th><td>${booking.payment_status == 'paid' ? 'បានបង់ប្រាក់' : 'មិនទាន់បង់'}</td></tr>
-                                        <tr><th>ថ្ងៃកក់:</th><td>${new Date(booking.booking_at).toLocaleString()}</td></tr>
+                                        <tr><th>Room Number:</th><td>${booking.room_number}</td></tr>
+                                        <tr><th>Room Type:</th><td>${booking.type_name}</td></tr>
+                                        <tr><th>Capacity:</th><td>${booking.capacity} persons</td></tr>
                                     </table>
                                 </div>
                             </div>
+                            <h6 class="mt-3">Booking Details</h6>
+                            <table class="table table-bordered">
+                                <tr><th>Check-in:</th><td>${new Date(booking.checkin_date).toLocaleDateString()}</td></tr>
+                                <tr><th>Check-out:</th><td>${new Date(booking.checkout_date).toLocaleDateString()}</td></tr>
+                                <tr><th>Nights:</th><td>${booking.nights} nights</td></tr>
+                                <tr><th>Total Payment:</th><td>$${parseFloat(booking.total_payment).toFixed(2)}</td></tr>
+                                <tr><th>Deposit (30%):</th><td>$${deposit.toFixed(2)}</td></tr>
+                                <tr><th>Remaining:</th><td>$${remaining.toFixed(2)}</td></tr>
+                                <tr><th>Booking Status:</th><td>${booking.booking_status}</td></tr>
+                                <tr><th>Payment Status:</th><td>${booking.payment_status}</td></tr>
+                                <tr><th>Booking Date:</th><td>${new Date(booking.booking_at).toLocaleString()}</td></tr>
+                            </table>
+                            ${booking.special_requests ? `<div class="alert alert-info mt-3"><strong>Special Requests:</strong><br>${booking.special_requests}</div>` : ''}
                         `;
-                        document.getElementById('bookingDetailsContent').innerHTML = modalContent;
-                        window.currentBookingData = booking;
-                        new bootstrap.Modal(document.getElementById('bookingDetailsModal')).show();
-                    }
-                } catch (error) {
-                    Swal.fire('កំហុស!', 'មិនអាចទាញយកព័ត៌មានការកក់បាន', 'error');
+                    document.getElementById('bookingDetailsContent').innerHTML = modalContent;
+                    window.currentBookingData = booking;
+                    new bootstrap.Modal(document.getElementById('bookingDetailsModal')).show();
                 }
-            });
+            } catch (error) {
+                Swal.fire('Error!', 'Could not fetch booking details', 'error');
+            }
         });
-        
-        // Confirm Booking with confirmation
-        document.querySelectorAll('.confirm-booking-btn').forEach(btn => {
-            btn.addEventListener('click', async function() {
-                const bookingId = this.dataset.id;
-                
-                const result = await Swal.fire({
-                    title: 'បញ្ជាក់ការកក់',
-                    text: 'តើអ្នកពិតជាចង់បញ្ជាក់ការកក់នេះមែនទេ?',
-                    icon: 'question',
-                    showCancelButton: true,
-                    confirmButtonColor: '#28a745',
-                    cancelButtonColor: '#d33',
-                    confirmButtonText: 'បាទ/ចាស, បញ្ជាក់!',
-                    cancelButtonText: 'បោះបង់'
-                });
-                
-                if (result.isConfirmed) {
-                    try {
-                        const response = await fetch('process_booking.php', {
-                            method: 'POST',
-                            headers: {
-                                'Content-Type': 'application/x-www-form-urlencoded',
-                            },
-                            body: `action=confirm_booking&booking_id=${bookingId}`
-                        });
-                        const data = await response.json();
-                        
-                        if (data.success) {
-                            Swal.fire('ជោគជ័យ!', data.message, 'success').then(() => {
-                                location.reload();
-                            });
-                        } else {
-                            Swal.fire('កំហុស!', data.message, 'error');
-                        }
-                    } catch (error) {
-                        Swal.fire('កំហុស!', 'មានបញ្ហាក្នុងការបញ្ជាក់ការកក់', 'error');
-                    }
-                }
-            });
-        });
-        
-        // Cancel Booking with confirmation
-        document.querySelectorAll('.cancel-booking-btn').forEach(btn => {
-            btn.addEventListener('click', async function() {
-                const bookingId = this.dataset.id;
-                
-                const result = await Swal.fire({
-                    title: 'បោះបង់ការកក់',
-                    text: 'តើអ្នកពិតជាចង់បោះបង់ការកក់នេះមែនទេ?',
-                    icon: 'warning',
-                    showCancelButton: true,
-                    confirmButtonColor: '#d33',
-                    cancelButtonColor: '#3085d6',
-                    confirmButtonText: 'បាទ/ចាស, បោះបង់!',
-                    cancelButtonText: 'មិនបោះបង់'
-                });
-                
-                if (result.isConfirmed) {
-                    try {
-                        const response = await fetch('process_booking.php', {
-                            method: 'POST',
-                            headers: {
-                                'Content-Type': 'application/x-www-form-urlencoded',
-                            },
-                            body: `action=cancel_booking&booking_id=${bookingId}`
-                        });
-                        const data = await response.json();
-                        
-                        if (data.success) {
-                            Swal.fire('បោះបង់ដោយជោគជ័យ!', data.message, 'success').then(() => {
-                                location.reload();
-                            });
-                        } else {
-                            Swal.fire('កំហុស!', data.message, 'error');
-                        }
-                    } catch (error) {
-                        Swal.fire('កំហុស!', 'មានបញ្ហាក្នុងការបោះបង់ការកក់', 'error');
-                    }
-                }
-            });
-        });
-        
-        // Update Payment Status with confirmation
-        document.querySelectorAll('.update-payment-btn').forEach(btn => {
-            btn.addEventListener('click', async function() {
-                const bookingId = this.dataset.id;
-                
-                const result = await Swal.fire({
-                    title: 'បញ្ជាក់ការបង់ប្រាក់',
-                    text: 'តើអ្នកប្រាកដថាភ្ញៀវបានបង់ប្រាក់រួចរាល់មែនទេ?',
-                    icon: 'question',
-                    showCancelButton: true,
-                    confirmButtonColor: '#ffc107',
-                    cancelButtonColor: '#d33',
-                    confirmButtonText: 'បាទ/ចាស, បានបង់ប្រាក់!',
-                    cancelButtonText: 'មិនទាន់'
-                });
-                
-                if (result.isConfirmed) {
-                    try {
-                        const response = await fetch('process_booking.php', {
-                            method: 'POST',
-                            headers: {
-                                'Content-Type': 'application/x-www-form-urlencoded',
-                            },
-                            body: `action=update_payment&booking_id=${bookingId}&payment_status=paid`
-                        });
-                        const data = await response.json();
-                        
-                        if (data.success) {
-                            Swal.fire('ជោគជ័យ!', data.message, 'success').then(() => {
-                                location.reload();
-                            });
-                        } else {
-                            Swal.fire('កំហុស!', data.message, 'error');
-                        }
-                    } catch (error) {
-                        Swal.fire('កំហុស!', 'មានបញ្ហាក្នុងការកំណត់ស្ថានភាពបង់ប្រាក់', 'error');
-                    }
-                }
-            });
-        });
-        
-        // Print Invoice
-        document.getElementById('printBooking')?.addEventListener('click', function() {
-            if (window.currentBookingData) {
-                const booking = window.currentBookingData;
-                const printWindow = window.open('', '_blank');
-                printWindow.document.write(`
+    });
+
+    // Print Invoice
+    document.getElementById('printBooking')?.addEventListener('click', function() {
+        if (window.currentBookingData) {
+            const booking = window.currentBookingData;
+            const deposit = booking.total_payment * 0.30;
+            const remaining = booking.total_payment - deposit;
+
+            const printWindow = window.open('', '_blank');
+            printWindow.document.write(`
                     <html>
                     <head>
                         <title>Invoice - Booking #${booking.booking_id}</title>
                         <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
                         <style>
-                            body { padding: 50px; font-family: 'Siemreap', Arial, sans-serif; }
+                            body { padding: 50px; font-family: Arial, sans-serif; }
                             .invoice-header { text-align: center; margin-bottom: 30px; border-bottom: 2px solid #543414; padding-bottom: 20px; }
-                            .invoice-footer { text-align: center; margin-top: 50px; border-top: 1px solid #ddd; padding-top: 20px; }
                             .hotel-name { color: #543414; font-size: 28px; font-weight: bold; }
                             .invoice-title { font-size: 24px; margin-top: 20px; }
-                            table { width: 100%; margin-top: 20px; }
-                            th, td { padding: 10px; border: 1px solid #ddd; }
-                            th { background: #d5c0b5; }
+                            .invoice-footer { text-align: center; margin-top: 50px; border-top: 1px solid #ddd; padding-top: 20px; }
                         </style>
                     </head>
                     <body>
                         <div class="invoice-header">
-                            <img src="../bayon_logo.png" 
-                            alt="Bayon Hotel Logo" 
-                            style="width: 100px; margin-right: 10px;">
-                            <div class="hotel-name">សណ្ឋាគារបាយ័ន</div>
-                            <p>សៀមរាប, កម្ពុជា</p>
-                            <div class="invoice-title">វិក្កយបត្រកក់បន្ទប់</div>
-                        </div>
-                        
-                        <div class="row">
-                            <div class="col-6">
-                                <strong>ព័ត៌មានកក់:</strong><br>
-                                លេខសម្គាល់កក់: #${booking.booking_id}<br>
-                                ថ្ងៃកក់: ${new Date(booking.booking_at).toLocaleString()}
-                            </div>
-                            <div class="col-6 text-end">
-                                <strong>ស្ថានភាព:</strong><br>
-                                <span class="badge ${booking.booking_status === 'confirmed' ? 'bg-success' : 'bg-warning'}">${booking.booking_status === 'confirmed' ? 'បានបញ្ជាក់' : 'កំពុងរង់ចាំ'}</span>
-                            </div>
-                        </div>
-                        
-                        <h5 class="mt-4">ព័ត៌មានភ្ញៀវ</h5>
-                        <table class="table table-bordered">
-                            <tr><th>ឈ្មោះភ្ញៀវ</th><td>${booking.user_name}</td></tr>
-                            <tr><th>អ៊ីមែល</th><td>${booking.email || 'មិនមាន'}</td></tr>
-                            <tr><th>លេខទូរស័ព្ទ</th><td>${booking.phone_number || 'មិនមាន'}</td></tr>
-                        </table>
-                        
-                        <h5 class="mt-4">ព័ត៌មានបន្ទប់</h5>
-                        <table class="table table-bordered">
-                            <tr><th>លេខបន្ទប់</th><td>${booking.room_number}</td></tr>
-                            <tr><th>ប្រភេទបន្ទប់</th><td>${booking.type_name}</td></tr>
-                            <tr><th>ថ្ងៃចូល</th><td>${new Date(booking.checkin_date).toLocaleDateString()}</td></tr>
-                            <tr><th>ថ្ងៃចេញ</th><td>${new Date(booking.checkout_date).toLocaleDateString()}</td></tr>
-                            <tr><th>ចំនួនយប់</th><td>${booking.nights} យប់</td></tr>
-                        </table>
-                        
-                        <h5 class="mt-4">សេចក្តីសង្ខេបនៃការបង់ប្រាក់</h5>
-                        <table class="table table-bordered">
-                            <tr><th>តម្លៃក្នុងមួយយប់</th><td>$${parseFloat(booking.price_per_night).toFixed(2)}</td></tr>
-                            <tr><th>ចំនួនយប់</th><td>${booking.nights} យប់</td></tr>
-                            <tr style="background: #f0f0f0;"><th>តម្លៃសរុប</th><td><strong>$${parseFloat(booking.total_payment).toFixed(2)}</strong></td></tr>
-                            <tr><th>ស្ថានភាពបង់ប្រាក់</th><td>${booking.payment_status === 'paid' ? 'បានបង់ប្រាក់រួច' : 'មិនទាន់បង់ប្រាក់'}</td></tr>
-                        </table>
-                        
-                        <div class="invoice-footer">
-                            <p>សូមអរគុណសម្រាប់ការជឿទុកចិត្តលើសណ្ឋាគារបាយ័ន!</p>
-                            <p>ទំនាក់ទំនង: 012 345 678 | Email: info@bayonbooking.com</p>
-                        </div>
-                    </body>
-                    </html>
-                `);
-                printWindow.document.close();
-                printWindow.print();
-            } else {
-                const printContent = document.getElementById('bookingDetailsContent').innerHTML;
-                const win = window.open('', '_blank');
-                win.document.write(`
-                    <html>
-                    <head>
-                        <title>Booking Invoice</title>
-                        <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
-                        <style>
-                            body { padding: 50px; font-family: Arial, sans-serif; }
-                            .invoice-header { text-align: center; margin-bottom: 30px; }
-                            .invoice-footer { text-align: center; margin-top: 50px; }
-                        </style>
-                    </head>
-                    <body>
-                        <div class="invoice-header">
-                            <h2>BayonBooking Hotel</h2>
+                            <div class="hotel-name">Bayon Hotel</div>
                             <p>Siem Reap, Cambodia</p>
-                            <h4>Booking Invoice</h4>
+                            <div class="invoice-title">Booking Invoice</div>
                         </div>
-                        ${printContent}
+                        <div class="row">
+                            <div class="col-6"><strong>Booking ID:</strong> #${booking.booking_id}</div>
+                            <div class="col-6 text-end"><strong>Date:</strong> ${new Date().toLocaleDateString()}</div>
+                        </div>
+                        <h5 class="mt-4">Guest Information</h5>
+                        <table class="table table-bordered">
+                            <tr><th>Name</th><td>${booking.user_name}</td></tr>
+                            <tr><th>Email</th><td>${booking.email || 'N/A'}</td></tr>
+                            <tr><th>Phone</th><td>${booking.phone_number || 'N/A'}</td></tr>
+                        </table>
+                        <h5 class="mt-4">Room Information</h5>
+                        <table class="table table-bordered">
+                            <tr><th>Room Number</th><td>${booking.room_number}</td></tr>
+                            <tr><th>Room Type</th><td>${booking.type_name}</td></tr>
+                            <tr><th>Check-in</th><td>${new Date(booking.checkin_date).toLocaleDateString()}</td></tr>
+                            <tr><th>Check-out</th><td>${new Date(booking.checkout_date).toLocaleDateString()}</td></tr>
+                            <tr><th>Nights</th><td>${booking.nights} nights</td></tr>
+                        </table>
+                        <h5 class="mt-4">Payment Summary</h5>
+                        <table class="table table-bordered">
+                            <tr><th>Total Payment</th><td class="text-end">$${parseFloat(booking.total_payment).toFixed(2)}</td></tr>
+                            <tr><th>Deposit (30%)</th><td class="text-end">$${deposit.toFixed(2)}</td></tr>
+                            <tr><th>Remaining</th><td class="text-end">$${remaining.toFixed(2)}</td></tr>
+                            <tr><th>Payment Status</th><td class="text-end">${booking.payment_status === 'paid' ? 'Paid' : 'Unpaid'}</td></tr>
+                        </table>
                         <div class="invoice-footer">
-                            <p>Thank you for choosing BayonBooking!</p>
+                            <p>Thank you for choosing Bayon Hotel!</p>
                         </div>
                     </body>
                     </html>
                 `);
-                win.document.close();
-                win.print();
+            printWindow.document.close();
+            printWindow.print();
+        }
+    });
+
+    // ============================================
+    // BOOKING MODAL DATE VALIDATION
+    // ADD THIS TO YOUR INDEX.PHP BOOKING MODAL
+    // ============================================
+    
+    // Variables for booking validation
+    let currentRoomPrice = 0;
+    let currentCapacity = 0;
+    let currentRoomId = 0;
+    
+    // Function to open booking modal with validation
+    window.openBookingModal = function(roomId, roomNumber, price, roomType, capacity) {
+        currentRoomPrice = price;
+        currentCapacity = capacity;
+        currentRoomId = roomId;
+        
+        // Set modal fields
+        const modalRoomId = document.getElementById('modal_room_id');
+        const modalRoomNumber = document.getElementById('modal_room_number');
+        const modalRoomType = document.getElementById('modal_room_type');
+        const modalPrice = document.getElementById('modal_price');
+        const modalCapacity = document.getElementById('modal_capacity');
+        const displayPrice = document.getElementById('display_price_per_night');
+        
+        if (modalRoomId) modalRoomId.value = roomId;
+        if (modalRoomNumber) modalRoomNumber.innerHTML = roomNumber;
+        if (modalRoomType) modalRoomType.innerHTML = roomType;
+        if (modalPrice) modalPrice.innerHTML = '$' + price.toFixed(2) + ' / night';
+        if (modalCapacity) modalCapacity.innerHTML = capacity;
+        if (displayPrice) displayPrice.innerHTML = price.toFixed(2);
+        
+        // Set max guests based on room capacity
+        const guestsSelect = document.getElementById('modal_guests');
+        if (guestsSelect) {
+            guestsSelect.innerHTML = '';
+            for(let i = 1; i <= capacity; i++) {
+                const option = document.createElement('option');
+                option.value = i;
+                option.textContent = i + ' Guest' + (i > 1 ? 's' : '');
+                guestsSelect.appendChild(option);
+            }
+        }
+        
+        // Set minimum check-in date (tomorrow)
+        const today = new Date();
+        const tomorrow = new Date(today);
+        tomorrow.setDate(today.getDate() + 1);
+        
+        const checkinInput = document.getElementById('modal_checkin');
+        const checkoutInput = document.getElementById('modal_checkout');
+        
+        if (checkinInput) {
+            checkinInput.min = tomorrow.toISOString().split('T')[0];
+            checkinInput.value = '';
+        }
+        if (checkoutInput) {
+            checkoutInput.value = '';
+            checkoutInput.min = '';
+        }
+        
+        // Reset displays
+        const nightsDisplay = document.getElementById('display_nights');
+        const totalDisplay = document.getElementById('display_total');
+        const depositDisplay = document.getElementById('display_deposit');
+        const remainingDisplay = document.getElementById('display_remaining');
+        
+        if (nightsDisplay) nightsDisplay.innerHTML = '0';
+        if (totalDisplay) totalDisplay.innerHTML = '0';
+        if (depositDisplay) depositDisplay.innerHTML = '0';
+        if (remainingDisplay) remainingDisplay.innerHTML = '0';
+        
+        // Remove any existing error messages
+        removeErrorMessages();
+        
+        // Set up event listeners
+        if (checkinInput) checkinInput.onchange = validateDates;
+        if (checkoutInput) checkoutInput.onchange = validateDates;
+        
+        // Show modal
+        const modalElement = document.getElementById('bookingModal');
+        if (modalElement) {
+            const modal = new bootstrap.Modal(modalElement);
+            modal.show();
+        }
+    };
+    
+    // Validate dates function
+    function validateDates() {
+        const checkin = document.getElementById('modal_checkin')?.value;
+        const checkout = document.getElementById('modal_checkout')?.value;
+        
+        // Remove existing error messages
+        removeErrorMessages();
+        
+        if (!checkin && !checkout) {
+            return;
+        }
+        
+        if (checkin && !checkout) {
+            // Only check-in selected - set minimum checkout date
+            const checkinDate = new Date(checkin);
+            const minCheckout = new Date(checkinDate);
+            minCheckout.setDate(checkinDate.getDate() + 1);
+            const checkoutInput = document.getElementById('modal_checkout');
+            if (checkoutInput) {
+                checkoutInput.min = minCheckout.toISOString().split('T')[0];
+            }
+            return;
+        }
+        
+        if (!checkin && checkout) {
+            // Check-out without check-in
+            showErrorMessage('Please select check-in date first', 'checkin');
+            const checkoutInput = document.getElementById('modal_checkout');
+            if (checkoutInput) checkoutInput.value = '';
+            return;
+        }
+        
+        if (checkin && checkout) {
+            const checkinDate = new Date(checkin);
+            const checkoutDate = new Date(checkout);
+            const today = new Date();
+            today.setHours(0, 0, 0, 0);
+            const tomorrow = new Date(today);
+            tomorrow.setDate(today.getDate() + 1);
+            
+            // Validation 1: Check-in cannot be in the past
+            if (checkinDate < tomorrow) {
+                showErrorMessage('Check-in date must be at least tomorrow. Please select a future date.', 'checkin');
+                const checkinInput = document.getElementById('modal_checkin');
+                const checkoutInput = document.getElementById('modal_checkout');
+                if (checkinInput) checkinInput.value = '';
+                if (checkoutInput) checkoutInput.value = '';
+                resetPriceDisplay();
+                return;
+            }
+            
+            // Validation 2: Check-out must be after check-in
+            if (checkoutDate <= checkinDate) {
+                showErrorMessage('Check-out date must be after check-in date. Please select a valid check-out date.', 'checkout');
+                const checkoutInput = document.getElementById('modal_checkout');
+                if (checkoutInput) checkoutInput.value = '';
+                resetPriceDisplay();
+                return;
+            }
+            
+            // Validation 3: Maximum stay limit (30 days)
+            const nights = Math.ceil((checkoutDate - checkinDate) / (1000 * 60 * 60 * 24));
+            if (nights > 30) {
+                showErrorMessage('Maximum stay is 30 nights. Please reduce your stay duration.', 'checkout');
+                const checkoutInput = document.getElementById('modal_checkout');
+                if (checkoutInput) checkoutInput.value = '';
+                resetPriceDisplay();
+                return;
+            }
+            
+            // Validation 4: Minimum stay (1 night)
+            if (nights < 1) {
+                showErrorMessage('Minimum stay is 1 night.', 'checkout');
+                const checkoutInput = document.getElementById('modal_checkout');
+                if (checkoutInput) checkoutInput.value = '';
+                resetPriceDisplay();
+                return;
+            }
+            
+            // All validations passed
+            updatePrice(checkinDate, checkoutDate, nights);
+        }
+    }
+    
+    // Update price display
+    function updatePrice(checkinDate, checkoutDate, nights) {
+        const total = currentRoomPrice * nights;
+        const deposit = total * 0.30;
+        const remaining = total - deposit;
+        
+        const nightsDisplay = document.getElementById('display_nights');
+        const totalDisplay = document.getElementById('display_total');
+        const depositDisplay = document.getElementById('display_deposit');
+        const remainingDisplay = document.getElementById('display_remaining');
+        const totalHidden = document.getElementById('modal_total_payment');
+        
+        if (nightsDisplay) nightsDisplay.innerHTML = nights;
+        if (totalDisplay) totalDisplay.innerHTML = total.toFixed(2);
+        if (depositDisplay) depositDisplay.innerHTML = deposit.toFixed(2);
+        if (remainingDisplay) remainingDisplay.innerHTML = remaining.toFixed(2);
+        if (totalHidden) totalHidden.value = total.toFixed(2);
+        
+        // Show success message
+        showSuccessMessage(nights, total);
+    }
+    
+    // Reset price display
+    function resetPriceDisplay() {
+        const nightsDisplay = document.getElementById('display_nights');
+        const totalDisplay = document.getElementById('display_total');
+        const depositDisplay = document.getElementById('display_deposit');
+        const remainingDisplay = document.getElementById('display_remaining');
+        
+        if (nightsDisplay) nightsDisplay.innerHTML = '0';
+        if (totalDisplay) totalDisplay.innerHTML = '0';
+        if (depositDisplay) depositDisplay.innerHTML = '0';
+        if (remainingDisplay) remainingDisplay.innerHTML = '0';
+    }
+    
+    // Show error message
+    function showErrorMessage(message, fieldId) {
+        const field = document.getElementById('modal_' + fieldId);
+        if (!field) return;
+        
+        const parent = field.parentElement;
+        const existingError = parent.querySelector('.error-message');
+        if (existingError) existingError.remove();
+        
+        const errorDiv = document.createElement('div');
+        errorDiv.className = 'error-message alert alert-danger alert-dismissible fade show mt-2';
+        errorDiv.setAttribute('role', 'alert');
+        errorDiv.style.fontSize = '0.9rem';
+        errorDiv.style.padding = '8px 12px';
+        errorDiv.innerHTML = `
+            <i class="fas fa-exclamation-triangle me-2"></i>
+            ${message}
+            <button type="button" class="btn-close btn-sm" data-bs-dismiss="alert" style="font-size: 0.7rem;"></button>
+        `;
+        
+        parent.appendChild(errorDiv);
+        field.style.borderColor = '#dc3545';
+        field.style.backgroundColor = '#fff8f8';
+        
+        field.onfocus = () => {
+            field.style.borderColor = '';
+            field.style.backgroundColor = '';
+            const error = parent.querySelector('.error-message');
+            if (error) error.remove();
+        };
+        
+        setTimeout(() => {
+            if (errorDiv.parentElement) {
+                errorDiv.remove();
+                field.style.borderColor = '';
+                field.style.backgroundColor = '';
+            }
+        }, 5000);
+    }
+    
+    // Show success message
+    function showSuccessMessage(nights, total) {
+        const existingSuccess = document.querySelectorAll('.success-message');
+        existingSuccess.forEach(msg => msg.remove());
+        
+        const priceBreakdown = document.querySelector('.price-breakdown');
+        if (!priceBreakdown) return;
+        
+        const successDiv = document.createElement('div');
+        successDiv.className = 'success-message alert alert-success mt-3 mb-0';
+        successDiv.style.fontSize = '0.9rem';
+        successDiv.style.padding = '10px 15px';
+        successDiv.innerHTML = `
+            <i class="fas fa-check-circle me-2"></i>
+            <strong>✓ Valid Dates!</strong> Your stay of ${nights} night(s) totals $${total.toFixed(2)}. 
+            Please proceed with the 30% deposit to confirm your reservation.
+        `;
+        
+        priceBreakdown.appendChild(successDiv);
+        
+        setTimeout(() => {
+            if (successDiv.parentElement) successDiv.remove();
+        }, 4000);
+    }
+    
+    // Remove all error messages
+    function removeErrorMessages() {
+        const errors = document.querySelectorAll('.error-message');
+        errors.forEach(error => error.remove());
+        
+        const checkinField = document.getElementById('modal_checkin');
+        const checkoutField = document.getElementById('modal_checkout');
+        
+        if (checkinField) {
+            checkinField.style.borderColor = '';
+            checkinField.style.backgroundColor = '';
+        }
+        if (checkoutField) {
+            checkoutField.style.borderColor = '';
+            checkoutField.style.backgroundColor = '';
+        }
+    }
+    
+    // Form submission validation for booking
+    const bookingForm = document.getElementById('bookingForm');
+    if (bookingForm) {
+        bookingForm.addEventListener('submit', function(e) {
+            const checkin = document.getElementById('modal_checkin')?.value;
+            const checkout = document.getElementById('modal_checkout')?.value;
+            const guests = parseInt(document.getElementById('modal_guests')?.value || 1);
+            
+            removeErrorMessages();
+            
+            if (!checkin) {
+                e.preventDefault();
+                showErrorMessage('Please select a check-in date.', 'checkin');
+                return false;
+            }
+            
+            if (!checkout) {
+                e.preventDefault();
+                showErrorMessage('Please select a check-out date.', 'checkout');
+                return false;
+            }
+            
+            const checkinDate = new Date(checkin);
+            const checkoutDate = new Date(checkout);
+            const today = new Date();
+            today.setHours(0, 0, 0, 0);
+            const tomorrow = new Date(today);
+            tomorrow.setDate(today.getDate() + 1);
+            
+            if (checkinDate < tomorrow) {
+                e.preventDefault();
+                showErrorMessage('Check-in date must be at least tomorrow.', 'checkin');
+                return false;
+            }
+            
+            if (checkoutDate <= checkinDate) {
+                e.preventDefault();
+                showErrorMessage('Check-out date must be after check-in date.', 'checkout');
+                return false;
+            }
+            
+            if (guests > currentCapacity) {
+                e.preventDefault();
+                showErrorMessage(`Maximum capacity is ${currentCapacity} guest(s).`, 'guests');
+                return false;
+            }
+            
+            const nights = Math.ceil((checkoutDate - checkinDate) / (1000 * 60 * 60 * 24));
+            const total = currentRoomPrice * nights;
+            
+            const confirmMessage = `Please confirm your booking details:\n\n` +
+                `📅 Check-in: ${checkinDate.toLocaleDateString()}\n` +
+                `📅 Check-out: ${checkoutDate.toLocaleDateString()}\n` +
+                `🌙 Nights: ${nights}\n` +
+                `👥 Guests: ${guests}\n` +
+                `💰 Total: $${total.toFixed(2)}\n` +
+                `💵 Deposit (30%): $${(total * 0.30).toFixed(2)}\n\n` +
+                `Click OK to proceed with the deposit payment.`;
+            
+            if (!confirm(confirmMessage)) {
+                e.preventDefault();
+                return false;
+            }
+            
+            return true;
+        });
+    }
+    
+    // Guest validation
+    const guestsSelect = document.getElementById('modal_guests');
+    if (guestsSelect) {
+        guestsSelect.addEventListener('change', function() {
+            const guests = parseInt(this.value);
+            if (guests > currentCapacity) {
+                showErrorMessage(`This room can only accommodate up to ${currentCapacity} guest(s).`, 'guests');
+                this.value = currentCapacity;
+            } else {
+                const parent = this.parentElement;
+                const existingError = parent.querySelector('.error-message');
+                if (existingError) {
+                    existingError.remove();
+                    this.style.borderColor = '';
+                    this.style.backgroundColor = '';
+                }
             }
         });
-    </script>
+    }
+</script>
 </body>
+
 </html>

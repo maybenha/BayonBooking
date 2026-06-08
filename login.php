@@ -92,9 +92,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 <link href="https://fonts.googleapis.com/css2?family=Siemreap&display=swap" rel="stylesheet">
 <div class="auth-container">
     <div class="auth-card">
-        <h2><i class="gold-text"></i>ការកក់សណ្ថាគារបាយ័ន</h2>
-
-        <p class="text-center">សូមស្វាគមន៍មកកាន់សណ្ឋាគារបាយ័ន</p>
+        <h2 style="font-family: 'Moul', sans-serif; font-size: 24px; text-align: center;"><i class="gold-text"></i>សូមស្វាគមន៍មកកាន់សណ្ឋាគារបុផ្ផាខ្មែរ</h2>
         
         <?php if($error): ?>
             <div class="alert alert-danger"><?php echo htmlspecialchars($error); ?></div>

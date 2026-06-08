@@ -72,7 +72,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 <link href="https://fonts.googleapis.com/css2?family=Siemreap&display=swap" rel="stylesheet">
 <div class="auth-container">
     <div class="auth-card">
-        <h2><i class=" gold-text"></i> ចុះឈ្មោះ</h2>
+        <h2 style="font-family: 'Moul', sans-serif; font-size: 24px; text-align: center;"><i class="gold-text"></i> សូមស្វាគមន៍មកកាន់សណ្ឋាគារបុផ្ផាខ្មែរ</h2>
         <p class="text-center">បង្កើតគណនីរបស់អ្នក</p>
         
         <?php if($error): ?>
